@@ -6,7 +6,7 @@ import { store, toast, useUI, type Gfx } from './state/store';
 import { RIDERS } from './engine/creatures';
 import { regrow, toggleFullscreen } from './ui/actions';
 import type { Weather } from './engine/palette';
-import { Activities, Compass, Controls, Hud, Intro, Labels, Loading, PauseMenu, PhotoBar, Reticle, Roster, Toast, TouchControls, WorldMap, fade } from './ui/Panels';
+import { Activities, Compass, Controls, Hud, Intro, Labels, Loading, PauseMenu, PhotoBar, ReinsHint, Reticle, Roster, Toast, TouchControls, WorldMap, fade } from './ui/Panels';
 
 const quality = detectQuality();
 const gfx = store.get<Gfx | null>('gfx', null) ?? defaultGfx(quality);
@@ -123,7 +123,7 @@ export function App() {
           readUrl();
           void engine.grow(useUI.getState().seed, quality).then(() => {
             const r = RIDERS[useUI.getState().sel];
-            setTimeout(() => toast(r.name, `riding ${r.pal.name} · press F to take the reins`), 900);
+            setTimeout(() => toast(r.name, `riding ${r.pal.name}`), 900);
           });
         }}
       >
@@ -142,6 +142,7 @@ export function App() {
       <PhotoBar />
       <PauseMenu />
       <Toast />
+      <ReinsHint />
       <div id="fade" />
       <Loading />
     </div>

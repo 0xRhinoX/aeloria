@@ -32,14 +32,15 @@ function readUrl() {
 }
 
 function Loop() {
-  const setDpr = useThree(s => s.setDpr);
-  const dpr = useThree(s => s.viewport.dpr);
+  const get = useThree(s => s.get);
   useFrame((_, delta) => {
     if (!engine.ready) return;
     const dt = Math.min(delta, 0.05);
     engine.update(dt);
+    // resize before drawing: resizing a canvas clears it, so doing it after render flashes a black frame
+    const { viewport, setDpr } = get();
+    if (Math.abs(viewport.dpr - engine.dpr) > 0.01) setDpr(engine.dpr);
     engine.render(dt);
-    if (Math.abs(dpr - engine.dpr) > 0.01) setDpr(engine.dpr);
   }, 1);
   return null;
 }

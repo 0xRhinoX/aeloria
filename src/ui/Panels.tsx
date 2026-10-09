@@ -4,7 +4,14 @@ import { engine } from '../engine/Engine';
 import { RIDERS, swatch } from '../engine/creatures';
 import type { Weather } from '../engine/palette';
 import { useUI, type CamMode, type Gfx } from '../state/store';
-import { regrow } from './actions';
+import { canFullscreen, regrow, toggleFullscreen } from './actions';
+
+const X_URL = 'https://x.com/0xRhinoX', POKEABLE_URL = 'https://pokeable.app/';
+const ext = { target: '_blank', rel: 'noopener' } as const;
+
+function Credits() {
+  return <>by <a href={X_URL} {...ext}>@0xRhinoX</a> · more worlds on <a href={POKEABLE_URL} {...ext}>Pokeable</a></>;
+}
 
 /** Fade to black, run the action, fade back. */
 export const fade = () =>
@@ -44,12 +51,13 @@ export function Intro() {
         <h1>Aeloria</h1>
       </button>
       {open && <>
-        <p>Every leaf, cliff, waterfall and glow here is grown in your browser from one number. <b>No models, no textures, no assets.</b> Click a rider to fly with them, or press <kbd>F</kbd> and fly yourself.</p>
+        <p>Every leaf, cliff, waterfall and glow here is grown in your browser from one number. <b>No models, no textures, no assets.</b> Click a rider to fly with them, or press <kbd>F</kbd> and fly yourself. <kbd>Esc</kbd> pauses and shows every control.</p>
         <dl className="stats">
           <div><dt>Floating isles</dt><dd>{stats.isles || '—'}</dd></div>
           <div><dt>Plants</dt><dd>{stats.plants ? (stats.plants / 1000).toFixed(1) + 'k' : '—'}</dd></div>
           <div><dt>Triangles</dt><dd>{tris ? (tris / 1e6).toFixed(1) + 'M' : '—'}</dd></div>
         </dl>
+        <p className="by"><Credits /></p>
       </>}
     </header>
   );
@@ -132,7 +140,13 @@ export function Controls() {
   const open = useUI(s => s.panelOpen), tab = useUI(s => s.tab);
   return (
     <>
-      <button className="btn panel ctrl-toggle" aria-expanded={open} aria-controls="ctrl" onClick={() => useUI.setState({ panelOpen: !open })}>{open ? 'Close' : 'Controls'}</button>
+      <div className="top-right">
+        {canFullscreen() && <FullscreenButton />}
+        <button className="btn panel icon" onClick={() => engine.pause(true)} aria-label="Pause and show controls" title="Pause, controls and help (Esc)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="2.5" width="3" height="11" rx="1" /><rect x="9.5" y="2.5" width="3" height="11" rx="1" /></svg>
+        </button>
+        <button className="btn panel ctrl-toggle" aria-expanded={open} aria-controls="ctrl" onClick={() => useUI.setState({ panelOpen: !open })}>{open ? 'Close' : 'Settings'}</button>
+      </div>
       <aside id="ctrl" className={'panel ctrl' + (open ? ' open' : '')} aria-label="World controls">
         <div className="tabs" role="tablist">
           <button role="tab" aria-selected={tab === 'ride'} onClick={() => useUI.setState({ tab: 'ride' })}>Ride</button>
@@ -382,6 +396,7 @@ export function Loading() {
   return (
     <div className={'loading' + (loading ? '' : ' done')} aria-hidden={!loading}>
       <div className="t">AELORIA</div>
+      <a className="by" href={X_URL} {...ext}>by @0xRhinoX</a>
       <div className="s">{msg}</div>
       {err && <div className="err">{err}</div>}
     </div>
@@ -395,6 +410,96 @@ export function PhotoBar() {
     <div className="photobar">
       {photo && <button className="btn primary" onClick={() => engine.savePhoto()}>Save image</button>}
       <button className="btn" onClick={() => useUI.setState({ photo: false, uiHidden: false })}>{photo ? 'Exit photo mode' : 'Show UI'}</button>
+    </div>
+  );
+}
+
+function FullscreenButton() {
+  const on = useUI(s => s.fullscreen);
+  return (
+    <button className="btn panel icon" onClick={toggleFullscreen} aria-pressed={on} aria-label={on ? 'Exit full screen' : 'Full screen'} title={(on ? 'Exit full screen' : 'Full screen') + ' (K)'}>
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        {on ? <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" /> : <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" />}
+      </svg>
+    </button>
+  );
+}
+
+type Row = [string, string, string?, string?];
+/** action, keyboard + mouse, gamepad, touch */
+const FLY: Row[] = [
+  ['Take the reins / autopilot', 'F', 'Start', 'Take reins button'],
+  ['Steer', 'Mouse (click the view first) or WASD / arrows', 'Left stick', 'Left stick on screen'],
+  ['Flap: thrust, uses stamina', 'Space', 'A or RT', 'Flap'],
+  ['Dive: tuck the wings', 'Shift', 'B or LT', 'Dive'],
+  ['Barrel roll', 'Q / E', 'X', 'Roll'],
+];
+const EXPLORE: Row[] = [
+  ['Switch rider', '1–6, Tab, or click a rider', 'LB / RB', 'Tap a rider'],
+  ['Camera: chase, saddle, drone, orbit, film', 'C (Shift+C back)', 'Y', 'Settings → Ride'],
+  ['World map, fly anywhere', 'M', 'Back', 'Minimap'],
+  ['Ring race', 'R', '', 'Race button'],
+  ['Seek a wild flock / hold to bond', 'G / hold B', '', 'Activity buttons'],
+  ['Sky: day, dusk, night', 'T', '', 'Settings → World'],
+  ['Photo mode', 'P', '', 'Settings → World'],
+  ['Hide the interface', 'H', '', ''],
+  ['Sound', 'O', '', 'Below'],
+  ['Full screen', 'K', '', 'Below'],
+  ['New world', 'N', '', 'Settings → World'],
+  ['Pause and this help', 'Esc', '', 'Pause button, top right'],
+  ['Resume', 'Esc', 'Start', 'Resume'],
+];
+
+function KeyTable({ title, rows, touch, pad }: { title: string; rows: Row[]; touch: boolean; pad: boolean }) {
+  return (
+    <div className="grp">
+      <span className="label">{title}</span>
+      <table className="keytable">
+        <tbody>
+          {rows.map(([what, kb, gp, tc]) => {
+            const how = touch ? tc : pad ? gp : kb;
+            return how ? <tr key={what}><th scope="row">{what}</th><td>{how}</td></tr> : null;
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Esc menu: freezes the world and explains every control for the input in use, plus credits. */
+export function PauseMenu() {
+  const s = useUI(useShallow(st => ({ paused: st.paused, touch: st.touch, pad: st.hud.pad, sound: st.sound, fs: st.fullscreen, manual: st.manual })));
+  const resume = useRef<HTMLButtonElement>(null);
+  const [input, setInput] = useState<'kb' | 'pad' | 'touch'>('kb');
+  useEffect(() => {
+    if (!s.paused) return;
+    setInput(s.touch ? 'touch' : s.pad ? 'pad' : 'kb');
+    resume.current?.focus();
+  }, [s.paused]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!s.paused) return null;
+  const close = () => engine.pause(false);
+  return (
+    <div className="pause-overlay" role="dialog" aria-modal="true" aria-labelledby="pause-title" onClick={e => { if (e.target === e.currentTarget) close(); }}>
+      <div className="panel pause-card">
+        <div className="pause-head">
+          <div><span className="eyebrow">Paused</span><h2 id="pause-title">How to fly</h2></div>
+          <button ref={resume} className="btn primary" onClick={close}>Resume {!s.touch && <kbd>Esc</kbd>}</button>
+        </div>
+        <p className="hint">Flight runs on energy. Diving trades height for speed, climbing spends it. Flapping gives thrust but drains stamina, which refills while you glide, collect drift seeds or pass race rings. Fly too slow and you stall. Flight assist (Settings → Ride) steers you around rock.</p>
+        <div className="seg" role="group" aria-label="Show controls for">
+          {([['kb', 'Keyboard + mouse'], ['pad', 'Gamepad'], ['touch', 'Touch']] as const).map(([k, l]) =>
+            <button key={k} aria-pressed={input === k} onClick={() => setInput(k)}>{l}</button>)}
+        </div>
+        <div className="pause-cols">
+          <KeyTable title={s.manual ? 'Flying (your reins)' : 'Flying yourself'} rows={FLY} touch={input === 'touch'} pad={input === 'pad'} />
+          <KeyTable title="Exploring" rows={EXPLORE} touch={input === 'touch'} pad={input === 'pad'} />
+        </div>
+        <div className="row">
+          {canFullscreen() && <button className="btn grow" aria-pressed={s.fs} onClick={toggleFullscreen}>{s.fs ? 'Exit full screen' : 'Full screen'}{!s.touch && <kbd>K</kbd>}</button>}
+          <button className="btn grow" data-sound aria-pressed={s.sound} onClick={() => engine.toggleSound()}>{s.sound ? 'Sound on' : 'Sound off'}{!s.touch && <kbd>O</kbd>}</button>
+        </div>
+        <p className="by pause-by"><Credits /></p>
+      </div>
     </div>
   );
 }

@@ -43,6 +43,9 @@ export interface UIState {
   uiHidden: boolean;
   photo: boolean;
   mapOpen: boolean;
+  /** pause menu with controls and credits */
+  paused: boolean;
+  fullscreen: boolean;
   /** flight assist: gentle avoidance and ground pull-up while flying yourself */
   assist: boolean;
   tab: Tab;
@@ -77,6 +80,8 @@ export const useUI = create<UIState>(() => ({
   uiHidden: false,
   photo: false,
   mapOpen: false,
+  paused: false,
+  fullscreen: false,
   assist: true,
   tab: 'ride',
   panelOpen: typeof window !== 'undefined' && window.innerWidth > 1100,

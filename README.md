@@ -2,6 +2,8 @@
 
 A bioluminescent world of floating mountains, giant trees and winged riders, grown in the browser from a single seed. There are no models, textures or downloaded assets. Every mesh, colour, glow, sky and sound is generated in code.
 
+Made by [@0xRhinoX](https://x.com/0xRhinoX). More AI-built worlds on [Pokeable](https://pokeable.app/).
+
 ## Run it
 
 ```bash
@@ -40,9 +42,9 @@ Press `F` (or **Take reins**) to fly the selected rider yourself. Press it again
 | Flap (thrust, uses stamina) | `Space` | `A` or `RT` | **Flap** |
 | Dive (tuck the wings) | `Shift` | `B` or `LT` | **Dive** |
 | Barrel roll | `Q` / `E` | `X` | **Roll** |
-| Back to autopilot | `F` (`Esc` frees the mouse) | `Start` | **Autopilot** |
+| Back to autopilot | `F` | `Start` | **Autopilot** |
 
-The flight model is energy based. Banking turns the mount. Diving trades height for speed, and climbing spends it. Tucking the wings cuts drag for fast dives. Flapping gives thrust but drains stamina, which refills while you glide. Collecting a drift seed or passing a race ring tops it up. Fly too slow and the mount stalls and noses down. Rock, ground and water are solid, so you bounce off them and lose speed. **Flight assist** (on by default, in Controls → Ride) steers gently around rock and pulls up near the ground.
+The flight model is energy based. Banking turns the mount. Diving trades height for speed, and climbing spends it. Tucking the wings cuts drag for fast dives. Flapping gives thrust but drains stamina, which refills while you glide. Collecting a drift seed or passing a race ring tops it up. Fly too slow and the mount stalls and noses down. Rock, ground and water are solid, so you bounce off them and lose speed. **Flight assist** (on by default, in Settings → Ride) steers gently around rock and pulls up near the ground.
 
 ## Other controls
 
@@ -57,6 +59,8 @@ The flight model is energy based. Banking turns the mount. Diving trades height 
 | `P` | photo mode, with depth of field and Save image |
 | `H` | hide the interface |
 | `O` | sound (on by default, starts on your first click or key press) |
+| `K` | full screen |
+| `Esc` | pause, with every control explained |
 | `N` | new world |
 
 ## Finding your way

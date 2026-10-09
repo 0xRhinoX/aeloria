@@ -136,6 +136,7 @@ export class Engine {
   private sunDir = new V3(0, 1, 0);
   private lastImpact = 0;
   private lastTrick = 0;
+  private pausedAt = 0;
   private stallT = 0;
 
   // pointer
@@ -176,6 +177,7 @@ export class Engine {
     this.wilds = new Wilds(scene);
     this.bindPointer(gl.domElement);
     this.armSound();
+    this.input.onLockLost = () => { const s = useUI.getState(); if (s.manual && !s.mapOpen && !s.photo) this.pause(true); };
     this.applyGfx(useUI.getState().gfx);
     this.ready = true;
   }
@@ -493,8 +495,28 @@ export class Engine {
   savePhoto() { this.captureNext = true; this.sound.shutter(); }
   toggleSound() {
     const on = this.sound.toggle(!useUI.getState().sound);
+    if (useUI.getState().paused) this.sound.suspend(true);
     useUI.setState({ sound: on });
     store.set('sound', on);
+  }
+  /** Freeze the world, free the mouse and silence it; on resume pick the reins back up where they were. */
+  pause(on: boolean) {
+    const s = useUI.getState();
+    if (on === s.paused) return;
+    if (on) {
+      this.pausedAt = performance.now();
+      this.input.keys = {}; this.bondHold = false;
+      this.input.releaseLock();
+    } else {
+      this.race?.hold(performance.now() - this.pausedAt);
+      if (s.manual && !s.touch) this.input.requestLock(this.gl.domElement);
+    }
+    this.sound.suspend(on);
+    useUI.setState({ paused: on });
+  }
+  /** While paused only the gamepad's Start button is listened to, and it resumes. */
+  pollPaused() {
+    for (const ev of this.input.pollPad()) if (ev === 'reins') this.pause(false);
   }
   /** Sound is on by default, but browsers only allow audio after a user gesture, so start it on the first one. */
   private armSound() {
@@ -505,6 +527,7 @@ export class Engine {
       // the gesture is the sound toggle itself: let it decide instead of fighting it
       if ((e as KeyboardEvent).code === 'KeyO' || (e.target as Element | null)?.closest?.('[data-sound]')) return;
       if (!useUI.getState().sound) useUI.setState({ sound: this.sound.toggle(true) });
+      if (useUI.getState().paused) this.sound.suspend(true);
     };
     evs.forEach(e => window.addEventListener(e, start, true));
   }

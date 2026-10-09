@@ -27,8 +27,17 @@ export class Input {
   private prevButtons: boolean[] = [];
   private aim = new THREE.Vector3();
 
+  /** called when the browser takes the pointer lock away (usually Esc), not when we release it ourselves */
+  onLockLost: (() => void) | null = null;
+  private releasing = false;
+
   constructor() {
-    document.addEventListener('pointerlockchange', () => { this.locked = !!document.pointerLockElement; });
+    document.addEventListener('pointerlockchange', () => {
+      const was = this.locked;
+      this.locked = !!document.pointerLockElement;
+      if (was && !this.locked && !this.releasing) this.onLockLost?.();
+      this.releasing = false;
+    });
     document.addEventListener('pointerlockerror', () => { this.lockFailed = true; });
     document.addEventListener('mousemove', e => {
       if (!this.locked) return;
@@ -45,7 +54,7 @@ export class Input {
     } catch { this.lockFailed = true; }
   }
 
-  releaseLock() { if (document.pointerLockElement) document.exitPointerLock(); }
+  releaseLock() { if (document.pointerLockElement) { this.releasing = true; document.exitPointerLock(); } }
 
   /** Align mouse aim with the rider so taking the reins does not jerk the mount. */
   syncAim(yaw: number, pitch: number) { this.aimYaw = yaw; this.aimPitch = pitch; }

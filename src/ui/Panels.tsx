@@ -9,8 +9,18 @@ import { canFullscreen, regrow, toggleFullscreen } from './actions';
 const X_URL = 'https://x.com/0xRhinoX', POKEABLE_URL = 'https://pokeable.app/';
 const ext = { target: '_blank', rel: 'noopener' } as const;
 
+const Out = () => <svg className="out" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5h5v5M9.5 2.5 3 9" /></svg>;
+
+/** Links to the author and Pokeable; both open in a new tab so the world keeps running here. */
 function Credits() {
-  return <>by <a href={X_URL} {...ext}>@0xRhinoX</a> · more worlds on <a href={POKEABLE_URL} {...ext}>Pokeable</a></>;
+  return (
+    <span className="credits">
+      <span>by</span>
+      <a href={X_URL} {...ext} title="0xRhinoX on X (opens in a new tab)">@0xRhinoX<Out /></a>
+      <span>more worlds on</span>
+      <a href={POKEABLE_URL} {...ext} title="Pokeable: AI-built worlds and toys (opens in a new tab)">Pokeable<Out /></a>
+    </span>
+  );
 }
 
 /** Fade to black, run the action, fade back. */
@@ -57,8 +67,8 @@ export function Intro() {
           <div><dt>Plants</dt><dd>{stats.plants ? (stats.plants / 1000).toFixed(1) + 'k' : '—'}</dd></div>
           <div><dt>Triangles</dt><dd>{tris ? (tris / 1e6).toFixed(1) + 'M' : '—'}</dd></div>
         </dl>
-        <p className="by"><Credits /></p>
       </>}
+      <div className="by"><Credits /></div>
     </header>
   );
 }
@@ -396,7 +406,7 @@ export function Loading() {
   return (
     <div className={'loading' + (loading ? '' : ' done')} aria-hidden={!loading}>
       <div className="t">AELORIA</div>
-      <a className="by" href={X_URL} {...ext}>by @0xRhinoX</a>
+      <div className="by"><Credits /></div>
       <div className="s">{msg}</div>
       {err && <div className="err">{err}</div>}
     </div>
@@ -498,7 +508,7 @@ export function PauseMenu() {
           {canFullscreen() && <button className="btn grow" aria-pressed={s.fs} onClick={toggleFullscreen}>{s.fs ? 'Exit full screen' : 'Full screen'}{!s.touch && <kbd>K</kbd>}</button>}
           <button className="btn grow" data-sound aria-pressed={s.sound} onClick={() => engine.toggleSound()}>{s.sound ? 'Sound on' : 'Sound off'}{!s.touch && <kbd>O</kbd>}</button>
         </div>
-        <p className="by pause-by"><Credits /></p>
+        <div className="by pause-by"><Credits /></div>
       </div>
     </div>
   );

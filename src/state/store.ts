@@ -61,6 +61,8 @@ export interface UIState {
   palettes: MountPalette[];
   riderPal: string[];
   toast: { title: string; sub: string; id: number } | null;
+  /** players with the game open right now; null while unknown */
+  online: number | null;
 }
 
 export const useUI = create<UIState>(() => ({
@@ -96,6 +98,7 @@ export const useUI = create<UIState>(() => ({
   palettes: [],
   riderPal: [],
   toast: null,
+  online: null,
 }));
 
 let toastId = 0;

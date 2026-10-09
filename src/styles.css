@@ -56,6 +56,8 @@ kbd { font: 10.5px var(--f-mono); padding: 1px 5px; border-radius: 4px; backgrou
 /* controls drawer */
 .top-right { position: fixed; top: var(--top); right: var(--gut); z-index: 4; display: flex; gap: 6px; }
 .top-right > .panel { position: static; }
+.online { display: flex; align-items: center; gap: 7px; padding: 0 11px; font: 500 12px var(--f-mono); white-space: nowrap; }
+.online i { width: 7px; height: 7px; border-radius: 50%; background: var(--bio); box-shadow: 0 0 8px var(--bio); }
 .btn.icon { padding: 7px 9px; display: grid; place-items: center; }
 .btn.icon svg { width: 16px; height: 16px; fill: currentColor; stroke: currentColor; stroke-width: 0; }
 .btn.icon svg path { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }

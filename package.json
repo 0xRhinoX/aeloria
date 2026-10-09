@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p worker && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p worker"
   },
   "dependencies": {
     "@react-three/fiber": "8.17.10",
@@ -18,11 +18,13 @@
     "zustand": "4.5.5"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260919.1",
     "@types/react": "18.3.11",
     "@types/react-dom": "18.3.1",
     "@types/three": "0.169.0",
     "@vitejs/plugin-react": "4.3.2",
     "typescript": "5.6.3",
-    "vite": "5.4.8"
+    "vite": "5.4.8",
+    "wrangler": "4.135.0"
   }
 }

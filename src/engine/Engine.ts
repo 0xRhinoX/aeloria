@@ -917,7 +917,8 @@ export class Engine {
     const cv = this.minimap, r = this.cur;
     if (!cv || !this.mapCanvas || !r || !this.data) return;
     const dpr = Math.min(devicePixelRatio, 2), css = cv.clientWidth || 160, S = Math.round(css * dpr);
-    if (cv.width !== S) { cv.width = cv.height = S; }
+    // check both sides: a fresh canvas is 300x150, so on a 2x screen the width already matches and the height never got set
+    if (cv.width !== S || cv.height !== S) { cv.width = cv.height = S; }
     const g = cv.getContext('2d')!, c = S / 2, viewR = 520, k = (S / 2) / viewR;
     const heading = Math.atan2(r.fwd.z, r.fwd.x), rot = -Math.PI / 2 - heading;
     g.clearRect(0, 0, S, S);

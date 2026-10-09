@@ -68,7 +68,6 @@ export function Intro() {
           <div><dt>Triangles</dt><dd>{tris ? (tris / 1e6).toFixed(1) + 'M' : '—'}</dd></div>
         </dl>
       </>}
-      <div className="by"><Credits /></div>
     </header>
   );
 }

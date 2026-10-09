@@ -135,6 +135,8 @@ export class Engine {
   private reqId = 0;
   private sunDir = new V3(0, 1, 0);
   private lastImpact = 0;
+  private lastTrick = 0;
+  private stallT = 0;
 
   // pointer
   private drag: { x: number; y: number; sx: number; sy: number } | null = null;
@@ -173,6 +175,7 @@ export class Engine {
     };
     this.wilds = new Wilds(scene);
     this.bindPointer(gl.domElement);
+    this.armSound();
     this.applyGfx(useUI.getState().gfx);
     this.ready = true;
   }
@@ -393,6 +396,7 @@ export class Engine {
       if (!useUI.getState().touch) this.input.requestLock(this.gl.domElement);
       if (useUI.getState().cam === 'cinema' || useUI.getState().cam === 'orbit') this.setCam('chase');
     } else this.input.releaseLock();
+    if (r.manual !== useUI.getState().manual) this.sound.reins(on);
     useUI.setState({ manual: on });
   }
   flyTo(i: number, fade?: () => Promise<void>) {
@@ -451,6 +455,7 @@ export class Engine {
       this.rig.snap = true;
       this.trails.reset();
       useUI.setState(s => ({ race: { ...s.race, active: true, next: 0, time: 0, last: null } }));
+      this.sound.horn();
       toast('Skyveil Run', `${race.total} rings through the Hanging Peaks`);
     };
     if (fade) void fade().then(go); else go();
@@ -485,10 +490,23 @@ export class Engine {
     catch { toast('Copy this link', url); }
     return url;
   }
-  savePhoto() { this.captureNext = true; }
+  savePhoto() { this.captureNext = true; this.sound.shutter(); }
   toggleSound() {
     const on = this.sound.toggle(!useUI.getState().sound);
     useUI.setState({ sound: on });
+    store.set('sound', on);
+  }
+  /** Sound is on by default, but browsers only allow audio after a user gesture, so start it on the first one. */
+  private armSound() {
+    if (!store.get('sound', true)) return;
+    const evs = ['pointerdown', 'keydown', 'touchstart'] as const;
+    const start = (e: Event) => {
+      evs.forEach(n => window.removeEventListener(n, start, true));
+      // the gesture is the sound toggle itself: let it decide instead of fighting it
+      if ((e as KeyboardEvent).code === 'KeyO' || (e.target as Element | null)?.closest?.('[data-sound]')) return;
+      if (!useUI.getState().sound) useUI.setState({ sound: this.sound.toggle(true) });
+    };
+    evs.forEach(e => window.addEventListener(e, start, true));
   }
 
   private bond() {
@@ -504,6 +522,7 @@ export class Engine {
     r.follow = null; r.cruiseOverride = null;
     this.syncPalettes();
     this.sound.chime(7);
+    this.sound.call();
     toast(`Bonded with ${gained.name}`, `${old.name} returns to the wild`);
   }
 
@@ -703,6 +722,7 @@ export class Engine {
     const near = this.wilds.nearest(sel.pos);
     if (this.bondHold && near.dist < 40) this.bondT += dt; else this.bondT = Math.max(0, this.bondT - dt * 2);
     if (this.bondT >= 2.5) { this.bondT = 0; this.bondHold = false; this.bond(); }
+    this.sound.bond(this.bondT / 2.5);
 
     // camera
     this.rig.update(dt, this.camera, sel, T, {
@@ -761,10 +781,14 @@ export class Engine {
     this.sound.frame(sel.speed, p.rain, sel.tuck);
     if (this.sound.on) {
       if (sel.flapped && s.cam !== 'cinema' && !s.photo) this.sound.whoosh(sel.amp);
+      if (sel.trickRoll !== 0 && this.lastTrick === 0) this.sound.roll(Math.sign(sel.trickRoll));
+      this.stallT -= dt;
+      if (sel.manual && sel.speed < 14.5 && this.stallT < 0) { this.sound.stall(); this.stallT = 1.2; }
       this.chirpT -= dt;
       if (this.chirpT < 0) { this.chirpT = 0.3 + Math.random() * (3 - p.glow * 2.2); if ((sel.low > 0.2 || p.glow > 0.4) && p.rain < 0.5) this.sound.chirp(); }
     }
 
+    this.lastTrick = sel.trickRoll;
     this.syncHud(dt, near.mount?.pal ?? null, near.dist);
     this.adaptDpr(dt);
   }

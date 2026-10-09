@@ -56,7 +56,7 @@ The flight model is energy based. Banking turns the mount. Diving trades height 
 | `G` / hold `B` | seek a wild flock / bond with a wild mount |
 | `P` | photo mode, with depth of field and Save image |
 | `H` | hide the interface |
-| `O` | sound |
+| `O` | sound (on by default, starts on your first click or key press) |
 | `N` | new world |
 
 ## Finding your way

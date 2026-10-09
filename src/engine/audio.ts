@@ -77,6 +77,12 @@ export class Sound {
     return this.on;
   }
 
+  /** silence everything while paused without forgetting whether sound is on */
+  suspend(on: boolean) {
+    if (!this.ac) return;
+    if (on) void this.ac.suspend(); else if (this.on) void this.ac.resume();
+  }
+
   frame(speed: number, rain: number, tuck = 0) {
     if (!this.ac || !this.on) return;
     const t = this.ac.currentTime;

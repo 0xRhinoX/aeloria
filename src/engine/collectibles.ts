@@ -96,6 +96,9 @@ export class Race {
 
   stop() { this.active = false; this.group.visible = false; }
 
+  /** keep the clock still while the game is paused */
+  hold(ms: number) { this.start += ms; }
+
   private paint() {
     this.rings.forEach((r, i) => {
       r.mesh.visible = i >= this.next;

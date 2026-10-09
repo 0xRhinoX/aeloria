@@ -120,7 +120,7 @@ function WorldTab() {
         options={[['fast', 'Fast'], ['balanced', 'Balanced'], ['high', 'High']]} />
       <small className="hint">High adds shadows, 4× anti-aliasing and denser grass. Fast turns off glow for older phones.</small>
       <div className="row">
-        <button className="btn grow" aria-pressed={s.sound} onClick={() => engine.toggleSound()}>{s.sound ? 'Sound on' : 'Sound off'}</button>
+        <button className="btn grow" data-sound aria-pressed={s.sound} onClick={() => engine.toggleSound()}>{s.sound ? 'Sound on' : 'Sound off'}</button>
         <button className="btn grow" onClick={() => useUI.setState({ photo: true })}>Photo mode</button>
         <button className="btn grow" onClick={() => useUI.setState({ uiHidden: true })}>Hide UI</button>
       </div>

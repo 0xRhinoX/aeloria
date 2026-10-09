@@ -20,6 +20,8 @@ npm run preview    # serve the production build
 3. `wrangler.jsonc` serves the `dist` folder as static assets, and `public/_headers` sets long-term caching for hashed assets.
 4. Attach a custom domain under the Worker's Domains tab → Add Domain.
 
+The Worker also runs a small `Presence` Durable Object (`worker/index.ts`) behind `/api/presence`. Each open game holds a WebSocket to it, and it sends back the number of players online, shown in the top-right corner. It hibernates between joins and leaves, so it fits the free Workers plan.
+
 It is a fully static site, so no server or environment variables are needed.
 
 ## What's in the world

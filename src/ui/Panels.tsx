@@ -145,11 +145,18 @@ function WorldTab() {
   );
 }
 
+function Online() {
+  const n = useUI(s => s.online);
+  if (n == null) return null;
+  return <div className="panel online" title="Players in Aeloria right now"><i aria-hidden="true" />{n} online</div>;
+}
+
 export function Controls() {
   const open = useUI(s => s.panelOpen), tab = useUI(s => s.tab);
   return (
     <>
       <div className="top-right">
+        <Online />
         {canFullscreen() && <FullscreenButton />}
         <button className="btn panel icon" onClick={() => engine.pause(true)} aria-label="Pause and show controls" title="Pause, controls and help (Esc)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="2.5" width="3" height="11" rx="1" /><rect x="9.5" y="2.5" width="3" height="11" rx="1" /></svg>

@@ -25,50 +25,94 @@ It is a fully static site, so no server or environment variables are needed.
 | Place | What you'll see |
 | --- | --- |
 | Hanging Peaks | ~40 floating mountains, karst spires, stone arches, waterfalls falling into mist |
-| Elder Tree | a 200 m braided tree with ~2,600 glowing hanging strands |
-| Lumen Forest | rainforest giants, glowing pods, trumpet flowers, ferns and mushrooms |
-| Amber Plains | grass meadows and umbrella trees under drifting islands |
-| Mirror Lake | still water with glowing plankton under a banded gas giant |
+| Elder Tree | a 200 m braided tree with a leafy glowing canopy and ~2,600 hanging strands |
+| Lumen Forest | rainforest giants, glowing pods, trumpet flowers, ferns, mushrooms and boulders |
+| Amber Plains | dense grass and umbrella trees under drifting islands |
+| Mirror Lake | water with depth colour, shoreline foam and glowing plankton, under a banded gas giant |
 
-## Controls
+## Flying
+
+Press `F` (or **Take reins**) to fly the selected rider yourself. Press it again to hand back to autopilot.
+
+| Input | Keyboard + mouse | Gamepad | Touch |
+| --- | --- | --- | --- |
+| Steer | Click the view to capture the mouse, then aim with it. Or use `WASD` / arrows. | Left stick | Left stick on screen |
+| Flap (thrust, uses stamina) | `Space` | `A` or `RT` | **Flap** |
+| Dive (tuck the wings) | `Shift` | `B` or `LT` | **Dive** |
+| Barrel roll | `Q` / `E` | `X` | **Roll** |
+| Back to autopilot | `F` (`Esc` frees the mouse) | `Start` | **Autopilot** |
+
+The flight model is energy based. Banking turns the mount. Diving trades height for speed, and climbing spends it. Tucking the wings cuts drag for fast dives. Flapping gives thrust but drains stamina, which refills while you glide. Collecting a drift seed or passing a race ring tops it up. Fly too slow and the mount stalls and noses down. Rock, ground and water are solid, so you bounce off them and lose speed. **Flight assist** (on by default, in Controls → Ride) steers gently around rock and pulls up near the ground.
+
+## Other controls
 
 | Key | Action |
 | --- | --- |
 | Click a rider / `1`–`6` / `Tab` | switch rider |
-| `F` | take the reins (`WASD` or arrows to steer, `Shift` to dive fast, `Esc` back to autopilot). On touch, drag to steer. |
-| `C` | camera: Chase, Saddle, Orbit, Film |
+| `C` (`Shift+C` back) | camera: Chase, Saddle, Drone, Orbit, Film |
+| `M` | world map: click anywhere to fly there, or jump straight there |
 | `T` | sky: Day, Dusk, Night |
 | `R` | start or quit the ring race |
 | `G` / hold `B` | seek a wild flock / bond with a wild mount |
-| `P` | photo mode (Save image) |
+| `P` | photo mode, with depth of field and Save image |
 | `H` | hide the interface |
-| `M` | sound |
+| `O` | sound |
 | `N` | new world |
+
+## Finding your way
+
+- **Minimap** in the HUD rotates with your heading. It shows riders, drift seeds, wild mounts, the next race ring and your map pin. Click it to open the world map.
+- **World map** (`M`): a hill-shaded overview baked from the terrain. Click any spot to set a pin, and the autopilot flies you there. You can also jump straight there.
+- **Compass** across the top shows the heading, nearby places with distances, the nearest drift seed, the nearest wild mount, the next race ring and your pin.
+- **Drone camera** follows from high above for a wide view of the surroundings.
+
+## Graphics presets
+
+| Preset | What it does |
+| --- | --- |
+| Fast | Direct rendering without post-processing, fewer grass blades, shorter draw distance. Default on phones. |
+| Balanced | HDR bloom, colour grading, 2× MSAA, camera-following grass. Default on most laptops. |
+| High | Adds sun shadows, 4× MSAA and denser grass. Default on strong desktops. |
+
+Every preset adjusts the pixel ratio on the fly to hold the frame rate. The choice is remembered.
 
 ## Mechanics
 
-- **Glow trail:** riders flying low make the ground and plants ripple with light, strongest at night.
+- **Glow trail:** riders flying low make the ground and plants ripple with light, strongest at night. Wingtips leave light trails at speed.
 - **Skyveil Run:** a ring race through the Hanging Peaks, with best times saved per seed.
 - **Wild mounts:** riderless flocks circle the peaks and plains. Fly within 40 m and hold Bond for 2.5 s to take the wild mount. Your old mount returns to the wild, and the new colourway is kept.
 - **Drift seeds:** 60 glowing seeds per world. Collecting them unlocks the Aurora (10), Obsidian (25) and Sunbloom (45) colourways.
-- **Weather:** clear, mist, rain and storm, with rain streaks, rippling water, lightning and thunder.
+- **Weather:** clear, mist, rain and storm, with valley fog, rain streaks, rippling water, lightning and thunder.
 - **Shareable worlds:** the seed, rider, sky and weather live in the URL (`?seed=4417&rider=2&sky=1&weather=storm`).
-- **Procedural sound:** wind, an ambient pad, wingbeats, creature chirps, chimes, rain and thunder, all synthesised with Web Audio.
+- **Procedural sound:** wind, a dive whistle, an ambient pad, wingbeats, impacts, water spray, creature chirps, chimes, rain and thunder, all synthesised with Web Audio.
 
 ## How it's built
 
 - **Vite + React + TypeScript**, rendering with **three.js** through **React Three Fiber**. React handles only the UI. The 3D scene is driven imperatively in `src/engine/Engine.ts` from a single `useFrame` loop, so there is no per-frame React reconciliation.
-- **Generation runs in a Web Worker** (`src/world/worker.ts`). It returns plain typed arrays, which are transferred to the main thread rather than copied, so the page stays responsive while the world grows.
-- **Instancing in spatial chunks:** plants and trees are `InstancedMesh` tiles with their own bounding spheres, so frustum culling and distance culling skip whole tiles.
-- **One shader patch for life** (`bioMat` in `src/engine/materials.ts`) adds per-vertex bioluminescence, world-space lichen speckles, wind sway and the wing-ripple glow to standard PBR materials.
-- **Quality tiers:** phones get fewer plants, a coarser terrain and no antialiasing. Auto graphics mode adjusts the pixel ratio to hold the frame rate.
+- **Generation runs in a Web Worker** (`src/world/worker.ts`). It returns plain typed arrays, which are transferred to the main thread rather than copied, so the page stays responsive while the world grows. The worker also bakes:
+  - terrain sky occlusion, including soft shadows under floating isles,
+  - a field texture (height, grass density, forest mask, occlusion) for the GPU,
+  - the overview map.
+- **Leaf-card canopies:** trees combine a lumpy core volume with alpha-tested leaf cards drawn from a procedural foliage atlas (`src/engine/leaves.ts`). The cards keep the canopy's normals, so the foliage shades as one soft volume.
+- **Camera-following grass** (`src/engine/grass.ts`): up to 130k blades in a tile that wraps around the camera. They are positioned entirely on the GPU from the field texture, using the same triangle split as the terrain mesh.
+- **One shader patch for life** (`bioMat` in `src/engine/materials.ts`) adds the following to standard PBR materials:
+  - per-vertex bioluminescence,
+  - world-space lichen speckles,
+  - procedural bump detail,
+  - wind sway,
+  - wing-ripple glow,
+  - backlit wing membranes,
+  - height fog that fills valleys and scatters toward the sun.
+- **Post-processing** (`src/engine/post.ts`, pmndrs `postprocessing`): HDR render, mipmap bloom, then one grade pass (exposure, ACES, saturation, vignette). Depth of field is on in photo mode.
+- **Instancing in spatial chunks:** plants, trees and boulders are `InstancedMesh` tiles with their own bounding spheres, so frustum culling and distance culling skip whole tiles.
 
 ```
 src/
   world/     noise, terrain, plant/tree/rock builders, generator, worker   (runs off-thread)
-  engine/    materials, sky/weather palette, creatures, flight, flocks, race, seeds, audio, Engine
+  engine/    materials, post, grass, leaves, sky/weather palette, creatures, rider flight model,
+             camera rig, input, effects (trails, speed lines, spray), flocks, race, seeds, audio, Engine
   state/     zustand store for the interface
-  ui/        panels, HUD, roster, name tags
+  ui/        panels, HUD with minimap, compass, world map, touch controls, name tags
 ```
 
 Add `?debug` to the URL to expose `window.aeloria` (the engine and store) in the console.

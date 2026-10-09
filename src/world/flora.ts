@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { type Noise, type Rand, TAU, clamp, sm } from './noise';
-import { BLACK, V3, blob, col, lathe, limb, merge, mix3, part, type GeoData, type Part } from './geometry';
+import { ATLAS, BLACK, V3, blob, cards, col, lathe, limb, merge, mix3, part, type GeoData, type Part } from './geometry';
 
 export interface Ctx { N: Noise; rand: Rand }
 
@@ -12,11 +12,11 @@ export function podGeo({ rand }: Ctx): GeoData {
   for (let i = 0; i < 5; i++) {
     const h = 1 + rand() * 1.7, r = 0.26 + rand() * 0.2;
     const prof: [number, number][] = [];
-    for (let j = 0; j <= 10; j++) {
-      const t = j / 10;
+    for (let j = 0; j <= 7; j++) {
+      const t = j / 7;
       prof.push([r * Math.pow(Math.sin(Math.PI * Math.pow(t, 0.62)), 0.85) * (t < 0.12 ? 0.5 + t / 0.24 : 1), t * h]);
     }
-    const g = lathe(prof, 10);
+    const g = lathe(prof, 7);
     const a = (i / 5) * TAU + rand(), d = i ? 0.42 + rand() * 0.2 : 0;
     g.rotateZ((rand() - 0.5) * 0.35); g.rotateX((rand() - 0.5) * 0.35); g.translate(Math.cos(a) * d, 0, Math.sin(a) * d);
     parts.push(part(g, (_x, y) => mix3(col('#1b3a44'), col('#a6dfe9'), y / h), (_x, y) => col('#2fe8ff').multiplyScalar(Math.pow(clamp(y / h, 0, 1), 1.4) * 1.5)));
@@ -29,8 +29,8 @@ export function trumpetGeo({ rand }: Ctx): GeoData {
   const parts: Part[] = [];
   for (let i = 0; i < 3; i++) {
     const h = 1.6 + rand() * 1.4, prof: [number, number][] = [];
-    for (let j = 0; j <= 12; j++) { const t = j / 12; prof.push([0.06 + Math.pow(t, 3.2) * 0.8, t * h]); }
-    const g = lathe(prof, 12);
+    for (let j = 0; j <= 9; j++) { const t = j / 9; prof.push([0.06 + Math.pow(t, 3.2) * 0.8, t * h]); }
+    const g = lathe(prof, 9);
     g.rotateZ((rand() - 0.5) * 0.4); g.translate((rand() - 0.5) * 0.8, 0, (rand() - 0.5) * 0.8);
     parts.push(part(g,
       (_x, y) => (y / h < 0.55 ? mix3(col('#2d5a30'), col('#7a2a6e'), (y / h) * 1.6) : mix3(col('#a9338f'), col('#ff9ad8'), (y / h - 0.55) * 2.2)),
@@ -52,7 +52,7 @@ export function fernGeo({ rand }: Ctx): GeoData {
         pts.push(new V3(0, H0 + R0 + Math.sin(ang - Math.PI / 2) * rad, Math.cos(ang - Math.PI / 2) * rad));
       }
     }
-    const g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 40, 0.055, 5);
+    const g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.055, 4);
     g.rotateY((i / 3) * TAU + rand()); g.translate((rand() - 0.5) * 0.6, 0, (rand() - 0.5) * 0.6);
     parts.push(part(g, (_x, y) => mix3(col('#24502a'), col('#7ab84a'), y / 2), (_x, y) => col('#5dffb0').multiplyScalar(sm((y - H0) / R0) * 1.2)));
   }
@@ -92,7 +92,7 @@ export function shroomGeo({ rand }: Ctx): GeoData {
     const h = 0.4 + rand() * 0.9, x = (rand() - 0.5) * 1.2, z = (rand() - 0.5) * 1.2, r = 0.18 + rand() * 0.28;
     const st = new THREE.CylinderGeometry(0.05, 0.08, h, 6, 1, true); st.translate(x, h / 2, z);
     parts.push(part(st, col('#d8d0e8')));
-    const cap = new THREE.SphereGeometry(r, 10, 5, 0, TAU, 0, Math.PI / 2); cap.scale(1, 0.55, 1); cap.translate(x, h, z);
+    const cap = new THREE.SphereGeometry(r, 8, 4, 0, TAU, 0, Math.PI / 2); cap.scale(1, 0.55, 1); cap.translate(x, h, z);
     parts.push(part(cap, col('#b9a8e8'), col(rand() < 0.5 ? '#8b6bff' : '#3fb8ff').multiplyScalar(1.3)));
   }
   return merge(parts);
@@ -130,6 +130,20 @@ export function grassGeo({ rand }: Ctx): GeoData {
   return { position: new Float32Array(P), normal, color: new Float32Array(C), glow: new Float32Array(G), radius: 3 };
 }
 
+/** A cluster of mossy boulders with lichen glow on their flanks. */
+export function boulderGeo({ N, rand }: Ctx): GeoData {
+  const parts: Part[] = [];
+  for (let i = 0; i < 3; i++) {
+    const s = i ? 0.35 + rand() * 0.4 : 1;
+    const b = blob(N, 2, 1.6 * s * (0.8 + rand() * 0.4), s * (0.7 + rand() * 0.5), 1.4 * s, 0.45, rand() * 50);
+    b.translate(i ? (rand() - 0.5) * 2.8 : 0, s * 0.3, i ? (rand() - 0.5) * 2.8 : 0);
+    parts.push(part(b,
+      (x, y, z, _nx, ny) => (ny > 0.55 ? mix3(col('#2c5a2e'), col('#4f8a3a'), N.n3(x * 2, y * 2, z * 2) + 0.5) : mix3(col('#5b5650'), col('#867e72'), N.n3(x * 3, y * 5, z * 3) + 0.5)),
+      (_x, _y, _z, _nx, ny) => (ny < 0.5 ? col('#2fffd0').multiplyScalar(0.7) : BLACK)));
+  }
+  return merge(parts);
+}
+
 export function vineGeo(): GeoData {
   const g = new THREE.BoxGeometry(0.3, 1, 0.3, 1, 6, 1); g.translate(0, -0.5, 0);
   return merge([part(g, (_x, y) => mix3(col('#4c7a3c'), col('#2a4a2a'), -y), (_x, y) => col('#3dffd2').multiplyScalar(sm((-y - 0.75) / 0.25) * 1.6))]);
@@ -141,6 +155,35 @@ export function tendrilGeo(): GeoData {
 }
 
 /* ------------------------------------------------------------ trees */
+
+interface CanopyStyle {
+  dark: THREE.Color;
+  light: THREE.Color;
+  /** glow colour on the shaded underside */
+  under: THREE.Color;
+  underK: number;
+  cell: readonly [number, number];
+  cards: number;
+  size: number;
+  detail?: number;
+}
+
+/**
+ * A canopy lobe: a lumpy core that fills the volume plus leaf cards that give it a broken,
+ * leafy silhouette. Cards share the lobe's outward normals so lighting stays soft.
+ */
+function canopy({ N, rand }: Ctx, parts: Part[], c: THREE.Vector3, sx: number, sy: number, sz: number, st: CanopyStyle) {
+  const b = blob(N, st.detail ?? 2, sx * 0.8, sy * 0.8, sz * 0.8, 0.3, rand() * 50);
+  b.translate(c.x, c.y, c.z);
+  const core = st.dark.clone().multiplyScalar(0.8);
+  parts.push(part(b,
+    (x, y, z, _nx, ny) => mix3(core, st.light, ny * 0.45 + 0.35 + N.n3(x * 0.3, y * 0.3, z * 0.3) * 0.3),
+    (_x, _y, _z, _nx, ny) => st.under.clone().multiplyScalar(sm((-ny - 0.1) / 0.4) * st.underK)));
+  const jitter = () => 0.85 + rand() * 0.3;
+  parts.push(cards(rand, c, sx, sy, sz, st.cards, st.size, st.cell,
+    (_nx, ny, _nz, depth) => mix3(st.dark, st.light, ny * 0.5 + 0.5).multiplyScalar((0.6 + 0.45 * depth) * jitter()),
+    (_nx, ny) => st.under.clone().multiplyScalar(sm((-ny - 0.05) / 0.4) * st.underK)));
+}
 
 const barkFn = (N: Noise) => (x: number, y: number, z: number) => mix3(col('#3a2e26'), col('#6a5a4a'), N.n3(x * 0.6, y * 0.08, z * 0.6) * 0.8 + 0.5);
 
@@ -165,13 +208,8 @@ export function treeA({ N, rand }: Ctx): GeoData {
     tops.push(e);
   }
   tops.push(new V3(Math.sin(H0 * 0.05) * 1.6, H0 + 3, 0));
-  for (const t of tops) {
-    const b = blob(N, 2, 8 + rand() * 3, 3.6 + rand() * 1.5, 8 + rand() * 3, 0.35, rand() * 50);
-    b.translate(t.x, t.y, t.z);
-    parts.push(part(b,
-      (x, y, z, _nx, ny) => mix3(col('#1d4a2c'), col('#4a8a3a'), ny * 0.6 + 0.4 + N.n3(x * 0.3, y * 0.3, z * 0.3) * 0.4),
-      (_x, _y, _z, _nx, ny) => col('#8c4dff').multiplyScalar(sm((-ny - 0.1) / 0.4) * 0.7)));
-  }
+  const styleA: CanopyStyle = { dark: col('#183f26'), light: col('#4f9440'), under: col('#8c4dff'), underK: 0.7, cell: ATLAS.broad, cards: 30, size: 5.2 };
+  for (const t of tops) canopy({ N, rand }, parts, t, 8 + rand() * 3, 3.8 + rand() * 1.5, 8 + rand() * 3, styleA);
   for (let i = 0; i < 12; i++) {
     const t = tops[i % tops.length], L = 5 + rand() * 9, g = new THREE.BoxGeometry(0.14, L, 0.14, 1, 4, 1);
     g.translate(t.x + (rand() - 0.5) * 10, t.y - 2 - L / 2, t.z + (rand() - 0.5) * 10);
@@ -189,12 +227,10 @@ export function treeB({ N, rand }: Ctx): GeoData {
     const a = (i / 5) * TAU + rand() * 0.5, e = new V3(Math.cos(a) * 11, H0 + 9 + rand() * 3, Math.sin(a) * 11);
     parts.push(part(limb(new V3(0, H0 - 1, 0), e, 1.2, 0.45), bark));
   }
+  const styleB: CanopyStyle = { dark: col('#1c4424'), light: col('#649c42'), under: col('#36f5d0'), underK: 0.6, cell: ATLAS.round, cards: 22, size: 4.6 };
   for (let i = 0; i < 11; i++) {
-    const a = rand() * TAU, r = i ? 4 + rand() * 9 : 0, b = blob(N, 2, 7 + rand() * 3, 2.2 + rand(), 7 + rand() * 3, 0.3, rand() * 50);
-    b.translate(Math.cos(a) * r, H0 + 10 + rand() * 2.5 - r * 0.12, Math.sin(a) * r);
-    parts.push(part(b,
-      (_x, _y, _z, _nx, ny) => mix3(col('#1f4a26'), col('#5a9440'), ny * 0.5 + 0.5),
-      (_x, _y, _z, _nx, ny) => col('#36f5d0').multiplyScalar(sm((-ny - 0.1) / 0.4) * 0.6)));
+    const a = rand() * TAU, r = i ? 4 + rand() * 9 : 0;
+    canopy({ N, rand }, parts, new V3(Math.cos(a) * r, H0 + 10 + rand() * 2.5 - r * 0.12, Math.sin(a) * r), 7 + rand() * 3, 2.4 + rand(), 7 + rand() * 3, styleB);
   }
   return merge(parts);
 }
@@ -208,12 +244,12 @@ export function treeC({ N, rand }: Ctx): GeoData {
   for (let i = 0; i < P.length; i += 3) P[i] += Math.pow(P[i + 1] / H0, 2) * 2;
   parts.push(part(tr, bark));
   const violet = rand() < 0.5;
+  const styleC: CanopyStyle = violet
+    ? { dark: col('#4a2262'), light: col('#c063b0'), under: col('#ff4fd8'), underK: 0.75, cell: ATLAS.frond, cards: 18, size: 2.8 }
+    : { dark: col('#16443f'), light: col('#45ab95'), under: col('#3fffe0'), underK: 0.75, cell: ATLAS.frond, cards: 18, size: 2.8 };
   for (let i = 0; i < 4; i++) {
-    const a = rand() * TAU, b = blob(N, 2, 3.4 + rand() * 1.6, 2.4 + rand(), 3.4 + rand() * 1.6, 0.3, rand() * 50);
-    b.translate(2 + Math.cos(a) * 2.4, H0 + 1 + rand() * 3, Math.sin(a) * 2.4);
-    parts.push(part(b,
-      (_x, _y, _z, _nx, ny) => (violet ? mix3(col('#5a2a72'), col('#b45aa8'), ny * 0.5 + 0.5) : mix3(col('#1b4f4c'), col('#3a9c8a'), ny * 0.5 + 0.5)),
-      (x, y, z, _nx, ny) => col(violet ? '#ff4fd8' : '#3fffe0').multiplyScalar(ny < -0.3 ? 0.6 : N.n3(x, y, z) > 0.42 ? 0.35 : 0.03)));
+    const a = rand() * TAU;
+    canopy({ N, rand }, parts, new V3(2 + Math.cos(a) * 2.4, H0 + 1 + rand() * 3, Math.sin(a) * 2.4), 3.4 + rand() * 1.6, 2.5 + rand(), 3.4 + rand() * 1.6, styleC);
   }
   for (let i = 0; i < 8; i++) {
     const L = 2 + rand() * 4, g = new THREE.BoxGeometry(0.1, L, 0.1);
@@ -245,11 +281,10 @@ export function elderTreeGeo({ N, rand }: Ctx): GeoData {
   }
   for (let k = 0; k < 38; k++) {
     const a = rand() * TAU, r = Math.sqrt(rand()) * 100, y = 146 + Math.cos((r / 100) * 1.4) * 42 + rand() * 10;
-    const b = blob(N, 3, 22 + rand() * 16, 9 + rand() * 6, 22 + rand() * 16, 0.35, rand() * 50);
-    b.translate(Math.cos(a) * r, y, Math.sin(a) * r);
-    parts.push(part(b,
-      (x, y, z, _nx, ny) => mix3(col('#173f2e'), col('#3d8a52'), ny * 0.5 + 0.5 + N.n3(x * 0.05, y * 0.05, z * 0.05) * 0.6),
-      (x, y, z, _nx, ny) => col('#7a5cff').multiplyScalar(sm((-ny - 0.1) / 0.4) * 0.8).add(col('#3fffe0').multiplyScalar(sm((N.n3(x * 0.04, y * 0.04, z * 0.04) - 0.05) / 0.3) * 0.5))));
+    canopy({ N, rand }, parts, new V3(Math.cos(a) * r, y, Math.sin(a) * r), 22 + rand() * 16, 9 + rand() * 6, 22 + rand() * 16, {
+      dark: col('#123a2a'), light: col('#3f9258'), under: col('#7a5cff'), underK: 0.85,
+      cell: k % 3 === 0 ? ATLAS.frond : ATLAS.broad, cards: 40, size: 11, detail: 3,
+    });
   }
   return merge(parts);
 }

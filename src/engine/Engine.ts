@@ -1,19 +1,26 @@
 import * as THREE from 'three';
 import { TAU, clamp, lerp, makeNoise, sm } from '../world/noise';
-import { Terrain, WL } from '../world/terrain';
+import { INNER, Terrain, WL } from '../world/terrain';
 import { toBufferGeometry } from '../world/geometry';
-import type { MatKey, PointsData, Quality, WorldData } from '../world/generate';
+import { MAP_SIZE, type MatKey, type PointsData, type Quality, type WorldData } from '../world/generate';
 import { U, bioMat, makeFallMaterial, makePointsMaterial, makeRain, makeSkyMaterial, makeWaterMaterial } from './materials';
 import { palette } from './palette';
 import { RIDERS, SEED_PALETTES, swatch, type MountPalette } from './creatures';
-import { Rider, type FlightInput } from './rider';
+import { NO_CONTROLS, Rider, type FlightWorld, type Solids } from './rider';
 import { Wilds } from './wild';
 import { Race, Seeds } from './collectibles';
 import { Sound } from './audio';
-import { store, toast, useUI, type CamMode } from '../state/store';
+import { Input } from './input';
+import { CameraRig } from './camera';
+import { Post } from './post';
+import { makeGrassField } from './grass';
+import { makeLeafAtlas } from './leaves';
+import { Splash, Trails, makeSpeedLines } from './effects';
+import { store, toast, useUI, type CamMode, type Gfx } from '../state/store';
 
 const V3 = THREE.Vector3;
 const UPV = new V3(0, 1, 0);
+const CAMS: CamMode[] = ['chase', 'seat', 'drone', 'orbit', 'cinema'];
 
 export function detectQuality(): Quality {
   const nav = navigator as Navigator & { deviceMemory?: number };
@@ -22,13 +29,14 @@ export function detectQuality(): Quality {
   if ((nav.hardwareConcurrency || 4) >= 8 && (nav.deviceMemory ?? 8) >= 8) return 'high';
   return 'medium';
 }
+export const defaultGfx = (q: Quality): Gfx => (q === 'low' ? 'fast' : q === 'medium' ? 'balanced' : 'high');
 
 /** Small ambient birds circling the regions; cheap instanced silhouettes. */
 class Birds {
   B: THREE.InstancedMesh; L: THREE.InstancedMesh; R: THREE.InstancedMesh;
   birds: { c: THREE.Vector3; rad: number; ph: number; sp: number; dy: number; fl: number; dir: number }[] = [];
   private m = new THREE.Matrix4(); private w = new THREE.Matrix4(); private q = new THREE.Quaternion(); private p = new V3(); private f = new V3();
-  private bank = new THREE.Quaternion(); private one = new V3(1, 1, 1); private mirror = new THREE.Matrix4().makeScale(-1, 1, 1);
+  private bank = new THREE.Quaternion(); private one = new V3(1, 1, 1); private mirror = new THREE.Matrix4().makeScale(-1, 1, 1); private rz = new THREE.Matrix4();
   constructor(group: THREE.Group, centres: THREE.Vector3[], mat: THREE.Material) {
     const body = new THREE.ConeGeometry(0.6, 4, 6); body.rotateX(Math.PI / 2);
     const wing = new THREE.BufferGeometry();
@@ -58,9 +66,9 @@ class Birds {
       this.q.setFromRotationMatrix(this.m).multiply(this.bank.setFromAxisAngle(new V3(0, 0, 1), 0.35 * b.dir));
       this.m.compose(this.p, this.q, this.one);
       this.B.setMatrixAt(i, this.m);
-      const fl = Math.sin(t * 5 + b.fl) * 0.6;
-      this.R.setMatrixAt(i, this.w.copy(this.m).multiply(new THREE.Matrix4().makeRotationZ(fl)));
-      this.L.setMatrixAt(i, this.w.copy(this.m).multiply(this.mirror).multiply(new THREE.Matrix4().makeRotationZ(fl)));
+      this.rz.makeRotationZ(Math.sin(t * 5 + b.fl) * 0.6);
+      this.R.setMatrixAt(i, this.w.copy(this.m).multiply(this.rz));
+      this.L.setMatrixAt(i, this.w.copy(this.m).multiply(this.mirror).multiply(this.rz));
     });
     this.B.instanceMatrix.needsUpdate = this.L.instanceMatrix.needsUpdate = this.R.instanceMatrix.needsUpdate = true;
   }
@@ -71,6 +79,7 @@ export class Engine {
   scene!: THREE.Scene;
   camera!: THREE.PerspectiveCamera;
   ready = false;
+  quality: Quality = 'medium';
 
   data: WorldData | null = null;
   terrain: Terrain | null = null;
@@ -83,6 +92,10 @@ export class Engine {
   race: Race | null = null;
   birds: Birds | null = null;
   sound = new Sound();
+  input = new Input();
+  rig = new CameraRig((a, b) => this.unocclude(a, b));
+  solids: Solids | null = null;
+  pin: THREE.Vector3 | null = null;
 
   private skyMat = makeSkyMaterial();
   private sky = new THREE.Mesh(new THREE.SphereGeometry(4600, 48, 24), this.skyMat);
@@ -92,18 +105,16 @@ export class Engine {
   private rain = makeRain(5000);
   private sun = new THREE.DirectionalLight(0xffffff, 2);
   private hemi = new THREE.HemisphereLight(0xffffff, 0x222222, 1);
-  private mats: Record<MatKey, THREE.Material> = {
-    terrain: bioMat({ roughness: 0.95 }, { ripple: true, k: 1.5, detail: 0.07 }),
-    outer: bioMat({ roughness: 1 }),
-    rock: bioMat({ roughness: 0.92 }, { k: 1.1, speck: 0.32, detail: 0.05 }),
-    elder: bioMat({ roughness: 0.9 }, { k: 1.5, speck: 0.4, detail: 0.06 }),
-    tree: bioMat({ roughness: 0.85, side: THREE.DoubleSide }, { k: 1.5, sway: 0.6, swayH: 50, speck: 0.6, detail: 0.2 }),
-    flora: bioMat({ roughness: 0.7, side: THREE.DoubleSide }, { k: 1.8, ripple: true, sway: 0.12, swayH: 2.5 }),
-    grass: bioMat({ roughness: 0.9, side: THREE.DoubleSide }, { k: 1.2, ripple: true, sway: 0.35, swayH: 1.6 }),
-    vine: bioMat({ roughness: 0.9 }, { k: 1.5, sway: 1.2, swayH: 1, hang: true }),
-    tendril: bioMat({ roughness: 0.6 }, { base: 0.15, k: 1.4, sway: 2.2, swayH: 1, hang: true }),
-  };
+  private mats!: Record<MatKey, THREE.Material>;
   private birdMat = bioMat({ roughness: 0.7, side: THREE.DoubleSide }, { base: 0.4, k: 1.2 });
+  private post: Post | null = null;
+  private grass: ReturnType<typeof makeGrassField> | null = null;
+  private trails = new Trails();
+  private speedLines = makeSpeedLines();
+  private splash = new Splash();
+  private fieldTex: THREE.DataTexture | null = null;
+  private mapCanvas: HTMLCanvasElement | null = null;
+  private gfx: Gfx | null = null;
 
   // simulation state
   private tod = 0.5;
@@ -117,43 +128,73 @@ export class Engine {
   dpr = 1;
   maxDpr = 1.5;
   private chirpT = 0;
+  private sprayT = 0;
   private captureNext = false;
   private worker: Worker | null = null;
   private reqId = 0;
+  private sunDir = new V3(0, 1, 0);
+  private lastImpact = 0;
 
-  // input
-  keys: Record<string, boolean> = {};
-  steer = { x: 0, y: 0 };
+  // pointer
   private drag: { x: number; y: number; sx: number; sy: number } | null = null;
   private lastDrag = 0;
   labels: HTMLElement[] = [];
+  minimap: HTMLCanvasElement | null = null;
+  compass: HTMLCanvasElement | null = null;
+  private miniT = 0;
 
-  // camera
-  private snap = true;
-  private camPos = new V3();
-  private camLook = new V3();
-  private lookYaw = 0;
-  private lookPitch = 0;
-  private orbitYaw = 0;
-  private orbitPitch = 0.25;
-  private orbitDist = 34;
-  private chaseDist = 30;
-  private shot = 0;
-  private shotT = 0;
-  private shotPos = new V3();
-  private qFlip = new THREE.Quaternion().setFromAxisAngle(UPV, Math.PI);
-
-  attach(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
+  attach(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, quality: Quality) {
     if (this.ready) return;
-    this.gl = gl; this.scene = scene; this.camera = camera;
-    camera.near = 0.3; camera.far = 9500; camera.fov = 62; camera.updateProjectionMatrix();
+    this.gl = gl; this.scene = scene; this.camera = camera; this.quality = quality;
+    camera.near = 0.3; camera.far = 9500; camera.fov = 60; camera.updateProjectionMatrix();
     scene.fog = new THREE.FogExp2(0x000000, 0.0005);
     this.sky.renderOrder = -10; this.sky.frustumCulled = false;
     this.water.position.y = WL;
-    scene.add(this.sky, this.water, this.sun, this.sun.target, this.hemi, this.rain);
+    this.water.receiveShadow = true;
+    const sh = this.sun.shadow;
+    sh.mapSize.set(2048, 2048);
+    Object.assign(sh.camera, { left: -230, right: 230, top: 230, bottom: -230, near: 1, far: 3200 });
+    sh.bias = -0.0004; sh.normalBias = 0.8;
+    scene.add(this.sky, this.water, this.sun, this.sun.target, this.hemi, this.rain, this.trails.mesh, this.speedLines, this.splash.points);
+
+    const bump = quality === 'low' ? 0 : 1;
+    const leaves = makeLeafAtlas(Math.min(8, gl.capabilities.getMaxAnisotropy()));
+    this.mats = {
+      terrain: bioMat({ roughness: 0.95 }, { ripple: true, k: 1.5, detail: 0.07, bump: 0.55 * bump, bumpF: 0.18 }),
+      outer: bioMat({ roughness: 1 }),
+      rock: bioMat({ roughness: 0.92 }, { k: 0.75, speck: 0.36, detail: 0.05, bump: 0.9 * bump, bumpF: 0.22 }),
+      elder: bioMat({ roughness: 0.9, side: THREE.DoubleSide, map: leaves, alphaTest: 0.5 }, { k: 1.5, speck: 0.4, detail: 0.06, leaf: true }),
+      tree: bioMat({ roughness: 0.85, side: THREE.DoubleSide, map: leaves, alphaTest: 0.5 }, { k: 1.5, sway: 0.6, swayH: 50, speck: 0.6, detail: 0.2, leaf: true }),
+      flora: bioMat({ roughness: 0.7, side: THREE.DoubleSide }, { k: 1.8, ripple: true, sway: 0.12, swayH: 2.5 }),
+      grass: bioMat({ roughness: 0.9, side: THREE.DoubleSide }, { k: 1.2, ripple: true, sway: 0.35, swayH: 1.6 }),
+      vine: bioMat({ roughness: 0.9 }, { k: 1.5, sway: 1.2, swayH: 1, hang: true }),
+      tendril: bioMat({ roughness: 0.6 }, { base: 0.15, k: 1.4, sway: 2.2, swayH: 1, hang: true }),
+    };
     this.wilds = new Wilds(scene);
-    this.bindInput(gl.domElement);
+    this.bindPointer(gl.domElement);
+    this.applyGfx(useUI.getState().gfx);
     this.ready = true;
+  }
+
+  /** Switch graphics preset: post-processing, MSAA, shadows, grass density and resolution cap. */
+  applyGfx(g: Gfx) {
+    if (g === this.gfx) return;
+    this.gfx = g;
+    const usePost = g !== 'fast';
+    if (usePost && !this.post) this.post = new Post(this.gl, this.scene, this.camera, g === 'high' ? 4 : 2);
+    if (this.post) this.post.msaa = g === 'high' ? 4 : 2;
+    this.gl.toneMapping = usePost ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
+    const shadows = g === 'high';
+    this.gl.shadowMap.enabled = shadows;
+    this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.sun.castShadow = shadows;
+    this.scene.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined; if (m) [m].flat().forEach(x => (x.needsUpdate = true)); });
+    if (this.grass) { this.scene.remove(this.grass.mesh); this.grass.mesh.geometry.dispose(); (this.grass.mesh.material as THREE.Material).dispose(); this.grass = null; }
+    const blades = g === 'fast' ? (this.quality === 'low' ? 14000 : 24000) : g === 'balanced' ? 60000 : 130000;
+    this.grass = makeGrassField(blades, g === 'high' ? 150 : g === 'balanced' ? 120 : 80);
+    this.scene.add(this.grass.mesh);
+    this.maxDpr = g === 'high' ? Math.min(devicePixelRatio, 2) : g === 'balanced' ? Math.min(devicePixelRatio, 1.5) : Math.min(devicePixelRatio, 1) * 0.85;
+    this.dpr = Math.min(this.dpr, this.maxDpr);
   }
 
   /* ------------------------------------------------------------ world lifecycle */
@@ -162,7 +203,7 @@ export class Engine {
     useUI.setState({ loading: true, loadMsg: `Growing seed ${seed}…`, error: null });
     this.worker ??= new Worker(new URL('../world/worker.ts', import.meta.url), { type: 'module' });
     const id = ++this.reqId;
-    return new Promise<void>((resolve) => {
+    return new Promise<void>(resolve => {
       this.worker!.onmessage = (e: MessageEvent<{ id: number; world?: WorldData; error?: string }>) => {
         if (e.data.id !== id) return;
         if (e.data.error || !e.data.world) {
@@ -189,6 +230,7 @@ export class Engine {
     this.scene.remove(this.world);
     this.world = null;
     this.chunks = [];
+    this.fieldTex?.dispose();
   }
 
   private build(d: WorldData) {
@@ -200,13 +242,31 @@ export class Engine {
     const g = (this.world = new THREE.Group());
     this.scene.add(g);
 
-    g.add(new THREE.Mesh(toBufferGeometry(d.terrain), this.mats.terrain));
-    g.add(new THREE.Mesh(toBufferGeometry(d.outer), this.mats.outer));
+    // ground field for GPU grass and water depth
+    const W = d.seg + 1;
+    const tex = new THREE.DataTexture(d.field, W, W, THREE.RGBAFormat, THREE.FloatType);
+    tex.minFilter = tex.magFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    this.fieldTex = tex;
+    U.uField.value = tex;
+    U.uFieldInfo.value.set(INNER, W, INNER / d.seg, 0);
+
+    // overview map image
+    const mc = document.createElement('canvas');
+    mc.width = mc.height = MAP_SIZE;
+    mc.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(d.map), MAP_SIZE, MAP_SIZE), 0, 0);
+    this.mapCanvas = mc;
+
+    const terrain = new THREE.Mesh(toBufferGeometry(d.terrain), this.mats.terrain);
+    terrain.receiveShadow = true;
+    g.add(terrain, new THREE.Mesh(toBufferGeometry(d.outer), this.mats.outer));
     const geos = d.geos.map(toBufferGeometry);
     for (const m of d.meshes) {
       const mesh = new THREE.Mesh(geos[m.geo], this.mats[m.mat]);
       mesh.position.set(...m.pos); mesh.rotation.y = m.rotY; mesh.scale.setScalar(m.scale);
       mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+      mesh.castShadow = mesh.receiveShadow = true;
       g.add(mesh);
     }
     for (const c of d.chunks) {
@@ -217,6 +277,8 @@ export class Engine {
       im.boundingSphere = new THREE.Sphere(new V3(...c.center), c.radius);
       im.userData = { c: new V3(...c.center), r: c.radius, max: c.maxDist, grass: c.grass };
       im.matrixAutoUpdate = false;
+      im.castShadow = c.mat === 'tree' || c.mat === 'rock';
+      im.receiveShadow = c.mat !== 'tendril';
       this.chunks.push(im);
       g.add(im);
     }
@@ -248,6 +310,17 @@ export class Engine {
     this.race = new Race(g, d.rings);
     this.wilds.build(d.seed, d.flocks);
 
+    const [ex, ey, ez] = d.elder;
+    this.solids = {
+      isles: d.isles,
+      arches: d.arches.map(a => {
+        const ax = new V3(...a.ax);
+        return { base: new V3(...a.c).add(new V3(0, -a.R * 0.45, 0)), side: new V3(ax.z, 0, -ax.x), R: a.R, tube: a.tube };
+      }),
+      pillars: d.obstacles.filter(o => o.t === 'c' && Math.hypot(o.x - ex, o.z - ez) > 5).map(o => ({ x: o.x, z: o.z, r: (o.r / 1.4) * 1.08, top: o.top })),
+      elder: { x: ex, y: ey, z: ez },
+    };
+
     if (!this.riders.length) this.riders = RIDERS.map((r, i) => new Rider(r, i, this.scene));
     const saved = store.get<Record<number, string>>('rider-pal', {});
     this.riders.forEach((r, i) => {
@@ -256,7 +329,9 @@ export class Engine {
       if (p && p.id !== r.pal.id) r.setPalette(p);
       r.spawn(this.flight, i % d.places.length);
     });
-    this.snap = true;
+    this.pin = null;
+    this.trails.reset();
+    this.rig.snap = true;
     useUI.setState({
       seed: d.seed,
       places: d.places.map(p => ({ name: p.name, sub: p.sub })),
@@ -268,7 +343,9 @@ export class Engine {
     this.syncPalettes();
   }
 
-  get flight() { return { terrain: this.terrain!, obstacles: this.data!.obstacles, places: this.data!.places }; }
+  get flight(): FlightWorld {
+    return { terrain: this.terrain!, obstacles: this.data!.obstacles, places: this.data!.places, solids: this.solids!, assist: useUI.getState().assist };
+  }
 
   /* ------------------------------------------------------------ palettes */
 
@@ -284,6 +361,7 @@ export class Engine {
     const p = this.allPalettes().find(x => x.id === id), r = this.cur;
     if (!p || !r) return;
     r.setPalette(p);
+    this.trails.reset();
     const saved = store.get<Record<number, string>>('rider-pal', {}); saved[r.i] = id; store.set('rider-pal', saved);
     this.syncPalettes();
   }
@@ -298,15 +376,22 @@ export class Engine {
     this.reins(false);
     if (s.race.active) this.stopRace();
     useUI.setState({ sel: i });
-    this.snap = true;
+    this.rig.snap = true;
+    this.trails.reset();
     toast(RIDERS[i].name, 'riding ' + this.riders[i].pal.name);
   }
-  setCam(c: CamMode) { useUI.setState({ cam: c }); this.snap = true; this.shotT = 0; }
+  cycleCam(dir = 1) { const c = useUI.getState().cam; this.setCam(CAMS[(CAMS.indexOf(c) + dir + CAMS.length) % CAMS.length]); }
+  setCam(c: CamMode) { useUI.setState({ cam: c }); this.rig.snap = true; }
   reins(on: boolean) {
     const r = this.cur;
     if (!r) return;
     r.manual = on;
-    if (on) { r.yaw = Math.atan2(r.fwd.x, r.fwd.z); r.pitch = Math.asin(clamp(r.fwd.y, -1, 1)); r.follow = null; r.cruiseOverride = null; }
+    if (on) {
+      r.follow = null; r.cruiseOverride = null; r.stamina = 1;
+      this.input.syncAim(r.yaw, r.pitch);
+      if (!useUI.getState().touch) this.input.requestLock(this.gl.domElement);
+      if (useUI.getState().cam === 'cinema' || useUI.getState().cam === 'orbit') this.setCam('chase');
+    } else this.input.releaseLock();
     useUI.setState({ manual: on });
   }
   flyTo(i: number, fade?: () => Promise<void>) {
@@ -317,20 +402,53 @@ export class Engine {
       r.follow = null; r.cruiseOverride = null;
       r.spawn(this.flight, i);
       r.nextTarget(this.flight);
-      this.snap = true;
+      this.rig.snap = true;
+      this.trails.reset();
       toast(this.data.places[i].name, this.data.places[i].sub);
     };
     if (fade) void fade().then(go); else go();
   }
+  /** Send the rider to any point on the map: fly there on autopilot, or jump straight there. */
+  flyToPoint(x: number, z: number, jump: boolean, fade?: () => Promise<void>) {
+    const r = this.cur, T = this.terrain;
+    if (!r || !T) return;
+    const p = new V3(x, T.surface(x, z) + 55, z);
+    for (let k = 0; k < 14 && this.solidAt(p); k++) p.y += 20;
+    this.pin = p;
+    if (useUI.getState().race.active) this.stopRace();
+    const go = () => {
+      if (jump) {
+        const from = new V3(r.pos.x - p.x, 0, r.pos.z - p.z);
+        if (from.lengthSq() < 1) from.set(1, 0, 0);
+        from.normalize();
+        const start = p.clone().addScaledVector(from, 220);
+        start.y = Math.max(p.y + 30, T.surface(start.x, start.z) + 50);
+        r.placeAt(start, p.clone().sub(start));
+        this.rig.snap = true;
+        this.trails.reset();
+      }
+      if (!r.manual) r.follow = () => {
+        if (!this.pin) return null;
+        if (r.pos.distanceTo(this.pin) < 60) { this.pin = null; r.follow = null; toast('Arrived', 'autopilot resumes the tour'); return null; }
+        return this.pin;
+      };
+    };
+    if (jump && fade) void fade().then(go); else go();
+    toast(jump ? 'Jumping' : 'Course set', `${Math.round(Math.hypot(x - r.pos.x, z - r.pos.z))} m away`);
+  }
+  clearPin() { this.pin = null; const r = this.cur; if (r && r.follow) r.follow = null; }
   startRace(fade?: () => Promise<void>) {
     const go = () => {
       const r = this.cur, race = this.race;
       if (!r || !race || !race.total) return;
       const r0 = race.rings[0];
       r.placeAt(r0.p.clone().addScaledVector(r0.n, -140).add(new V3(0, 6, 0)), r0.n);
-      r.follow = () => race.aim();
+      r.speed = 34;
+      r.stamina = 1;
+      if (!r.manual) r.follow = () => race.aim();
       race.begin();
-      this.snap = true;
+      this.rig.snap = true;
+      this.trails.reset();
       useUI.setState(s => ({ race: { ...s.race, active: true, next: 0, time: 0, last: null } }));
       toast('Skyveil Run', `${race.total} rings through the Hanging Peaks`);
     };
@@ -359,7 +477,6 @@ export class Engine {
     r.follow = () => seeds.nearestOpen(r.pos)?.p ?? null;
     toast('Seeking drift seeds', 'your rider will fly through the nearest ones');
   }
-  stopFollow() { const r = this.cur; if (r) { r.follow = null; r.cruiseOverride = null; } }
   async share() {
     const s = useUI.getState();
     const url = `${location.origin}${location.pathname}?seed=${s.seed}&rider=${s.sel + 1}&sky=${s.cycle ? 'cycle' : s.sky}&weather=${s.weather}`;
@@ -379,6 +496,7 @@ export class Engine {
     const old = r.pal, gained = mount.pal;
     r.setPalette(gained);
     this.wilds.release(mount, old);
+    this.trails.reset();
     const bonded = store.get<MountPalette[]>('bonded', []);
     if (!bonded.some(b => b.id === gained.id) && !RIDERS.some(x => x.pal.id === gained.id)) { bonded.push(gained); store.set('bonded', bonded); }
     const saved = store.get<Record<number, string>>('rider-pal', {}); saved[r.i] = gained.id; store.set('rider-pal', saved);
@@ -388,30 +506,37 @@ export class Engine {
     toast(`Bonded with ${gained.name}`, `${old.name} returns to the wild`);
   }
 
-  /* ------------------------------------------------------------ input */
+  /* ------------------------------------------------------------ pointer */
 
-  private bindInput(el: HTMLCanvasElement) {
-    el.addEventListener('pointerdown', e => { this.drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY }; el.setPointerCapture(e.pointerId); el.classList.add('drag'); });
+  private bindPointer(el: HTMLCanvasElement) {
+    el.addEventListener('pointerdown', e => {
+      if (this.cur?.manual && e.pointerType === 'mouse' && !this.input.locked && !this.input.lockFailed) { this.input.requestLock(el); return; }
+      if (this.input.locked) return;
+      this.drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
+      el.setPointerCapture(e.pointerId);
+      el.classList.add('drag');
+    });
     el.addEventListener('pointermove', e => {
+      if (this.input.locked) return;
       if (!this.drag) { el.classList.toggle('hover', this.pick(e) >= 0); return; }
       const dx = e.clientX - this.drag.x, dy = e.clientY - this.drag.y;
       this.drag.x = e.clientX; this.drag.y = e.clientY; this.lastDrag = performance.now();
-      if (this.cur?.manual) { this.steer.x = clamp((e.clientX - this.drag.sx) / 110, -1, 1); this.steer.y = clamp(-(e.clientY - this.drag.sy) / 110, -1, 1); return; }
-      if (useUI.getState().cam === 'orbit') { this.orbitYaw -= dx * 0.006; this.orbitPitch = clamp(this.orbitPitch + dy * 0.004, -0.4, 1.3); }
-      else { this.lookYaw -= dx * 0.005; this.lookPitch = clamp(this.lookPitch - dy * 0.004, -0.8, 0.8); }
+      if (this.cur?.manual && e.pointerType === 'mouse') {
+        this.input.drag.x = clamp((e.clientX - this.drag.sx) / 110, -1, 1);
+        this.input.drag.y = clamp(-(e.clientY - this.drag.sy) / 110, -1, 1);
+        return;
+      }
+      this.rig.drag(dx, dy, useUI.getState().cam);
     });
     const up = (e: PointerEvent) => {
       el.classList.remove('drag');
-      this.steer.x = this.steer.y = 0;
+      this.input.drag.x = this.input.drag.y = 0;
       if (this.drag && Math.hypot(e.clientX - this.drag.sx, e.clientY - this.drag.sy) < 6) { const i = this.pick(e); if (i >= 0) this.select(i); }
       this.drag = null;
     };
     el.addEventListener('pointerup', up);
     el.addEventListener('pointercancel', up);
-    el.addEventListener('wheel', e => {
-      this.orbitDist = clamp(this.orbitDist * (1 + e.deltaY * 0.001), 12, 160);
-      this.chaseDist = clamp(this.chaseDist * (1 + e.deltaY * 0.001), 10, 80);
-    }, { passive: true });
+    el.addEventListener('wheel', e => this.rig.zoom(e.deltaY), { passive: true });
   }
 
   pick(e: { clientX: number; clientY: number }) {
@@ -428,13 +553,46 @@ export class Engine {
     return best;
   }
 
-  private input(): FlightInput {
-    const k = this.keys;
-    return {
-      x: (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0) + this.steer.x,
-      y: (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0) + this.steer.y,
-      boost: !!(k.ShiftLeft || k.ShiftRight || k.Space),
+  /** True when a point sits inside terrain or any obstacle's avoidance volume. */
+  private solidAt(p: THREE.Vector3) {
+    if (!this.data || !this.terrain) return false;
+    if (p.y < this.terrain.surface(p.x, p.z) + 3) return true;
+    return this.data.obstacles.some(ob => (ob.t === 's' ? Math.hypot(p.x - ob.x, p.y - ob.y, p.z - ob.z) < ob.r : p.y < ob.top && Math.hypot(p.x - ob.x, p.z - ob.z) < ob.r));
+  }
+
+  /** True if a camera at p would sit inside or right against rock (isle outlines padded for their bumps). */
+  private camBlocked(p: THREE.Vector3) {
+    const S = this.solids;
+    if (!S) return false;
+    for (const [x, y, z, R] of S.isles) {
+      const h = Math.hypot(p.x - x, p.z - z);
+      if (h > R * 1.35 + 4 || p.y > y + R * 0.45 + 4 || p.y < y - R * 2.2) continue;
+      const t = Math.min(1, h / (R * 1.35));
+      if (p.y < y + R * 0.4 * (1 - t * t) + 4 && p.y > y - R * 2.1 * Math.pow(1 - t, 0.8) - 2) return true;
+    }
+    for (const c of S.pillars) if (p.y < c.top + 4 && Math.hypot(p.x - c.x, p.z - c.z) < c.r * 1.35 + 3) return true;
+    const e = S.elder, dx = p.x - e.x, dz = p.z - e.z;
+    if ((dx * dx + dz * dz) / (128 * 128) + ((p.y - e.y - 162) ** 2) / (55 * 55) < 1) return true;
+    return false;
+  }
+
+  /** Keep rock out of the shot: try the wanted spot, then higher, then closer to the rider. */
+  private unocclude(from: THREE.Vector3, to: THREE.Vector3) {
+    if (!this.data) return;
+    const p = new V3();
+    const clear = (target: THREE.Vector3) => {
+      for (let i = 2; i <= 12; i++) { p.lerpVectors(from, target, i / 12); if (this.camBlocked(p)) return false; }
+      return true;
     };
+    if (clear(to)) return;
+    const dist = from.distanceTo(to);
+    const raised = to.clone().add(new V3(0, dist * 0.7, 0));
+    if (clear(raised)) { to.copy(raised); return; }
+    for (const t of [0.7, 0.5, 0.35]) {
+      const c = new V3().lerpVectors(from, raised, t);
+      if (clear(c)) { to.copy(c); return; }
+    }
+    to.lerpVectors(from, to, 0.35);
   }
 
   /* ------------------------------------------------------------ frame */
@@ -442,8 +600,18 @@ export class Engine {
   update(dt: number) {
     if (!this.data || !this.terrain) return;
     const s = useUI.getState();
+    if (s.gfx !== this.gfx) this.applyGfx(s.gfx);
     const T = this.terrain;
     const t = (U.uTime.value += dt);
+
+    // gamepad
+    for (const ev of this.input.pollPad()) {
+      if (ev === 'reins') this.reins(!s.manual);
+      if (ev === 'camera') this.cycleCam();
+      if (ev === 'next') this.select((s.sel + 1) % this.riders.length);
+      if (ev === 'prev') this.select((s.sel + this.riders.length - 1) % this.riders.length);
+      if (ev === 'map') useUI.setState({ mapOpen: !s.mapOpen });
+    }
 
     // time of day + weather
     let target = s.sky;
@@ -456,12 +624,17 @@ export class Engine {
     }
     this.flash *= Math.exp(-dt * 5);
     const fl = this.flash * (0.6 + 0.4 * Math.sin(t * 60));
-    const sunDir = new V3(Math.cos(p.el) * Math.sin(p.az), Math.sin(p.el), Math.cos(p.el) * Math.cos(p.az)).normalize();
+    const sunDir = this.sunDir.set(Math.cos(p.el) * Math.sin(p.az), Math.sin(p.el), Math.cos(p.el) * Math.cos(p.az)).normalize();
     const su = this.skyMat.uniforms;
     su.uZen.value.copy(p.zen); su.uHor.value.copy(p.hor); su.uSunDir.value.copy(sunDir); su.uSunC.value.copy(p.sunC);
     su.uCloud.value.copy(p.cloud); su.uStars.value = p.stars; su.uNight.value = sm((this.tod - 0.5) * 2); su.uCover.value = p.cover; su.uFlash.value = fl;
     const fog = this.scene.fog as THREE.FogExp2;
     fog.color.copy(p.fog); fog.density = p.fd;
+    U.uSunDir.value.copy(sunDir);
+    U.uSunCol.value.copy(p.sunC).lerp(p.fog, 0.35);
+    const mistK = s.weather === 'mist' ? 2.6 : s.weather === 'rain' ? 1.6 : s.weather === 'storm' ? 1.9 : 1;
+    U.uFogH.value.set(WL + 6, 0.011, 0.0011 * mistK * (1 + p.glow * 0.3));
+    U.uFogScatter.value = lerp(0.45, 0.9, 1 - Math.abs(this.tod - 0.5) * 2) * (1 - p.cover * 0.7);
     this.sun.color.copy(p.sunC); this.sun.intensity = p.sunI;
     this.hemi.color.copy(p.hs); this.hemi.groundColor.copy(p.hg); this.hemi.intensity = p.hi + fl * 3;
     this.gl.toneMappingExposure = p.exp + fl * 0.3;
@@ -469,43 +642,56 @@ export class Engine {
     U.uWind.value = p.wind;
 
     // riders
-    const inp = this.input();
     const flight = this.flight;
+    const sel = this.cur;
+    const ctl = sel.manual ? this.input.controls(sel.yaw, sel.pitch) : NO_CONTROLS;
     this.riders.forEach((r, i) => {
-      if (r.follow && r === this.cur && !s.race.active) {
+      if (r.follow && r === sel && !s.race.active && !r.manual) {
         const f = r.follow();
         r.cruiseOverride = f && f.distanceTo(r.pos) < 40 ? 25 : null;
       }
-      r.update(dt, i === s.sel ? inp : undefined, flight);
+      r.update(dt, i === s.sel ? ctl : NO_CONTROLS, flight);
       U.uRip.value[i].set(r.pos.x, T.surface(r.pos.x, r.pos.z), r.pos.z, r.low);
     });
-    const r = this.cur;
     this.wilds.update(dt, T, this.data.obstacles);
     this.birds?.update(t);
 
+    // impacts, spray, trails
+    if (sel.impact > this.lastImpact + 0.15) this.sound.thump(sel.impact);
+    this.lastImpact = sel.impact;
+    const overWater = T.groundY(sel.pos.x, sel.pos.z) < WL && sel.pos.y - WL < 5;
+    this.sprayT -= dt;
+    if (overWater && sel.speed > 12) {
+      this.splash.emit(new V3(sel.pos.x, WL + 0.3, sel.pos.z), sel.fwd, sel.speed, sel.pos.y - WL < 3 ? 6 : 2);
+      if (this.sprayT < 0) { this.sound.spray(); this.sprayT = 0.4; }
+    }
+    this.splash.update(dt);
+    this.trails.update(sel.mount.tips, sel.mount.body, new THREE.Color(sel.pal.glow), clamp((sel.speed - 26) / 40, 0, 1) * (s.cam === 'seat' ? 0.35 : 0.8));
+
     // drift seeds
     if (this.seeds) {
-      const hit = this.seeds.update(r.pos);
+      const hit = this.seeds.update(sel.pos);
       if (hit >= 0) {
         store.set(`seeds-${this.data.seed}`, [...this.seeds.got]);
         const total = store.get<number>('seed-total', 0) + 1;
         store.set('seed-total', total);
         this.sound.chime(this.seeds.got.size % 5);
+        if (sel.manual) sel.stamina = Math.min(1, sel.stamina + 0.35);
         const unlock = SEED_PALETTES.find(x => x.at === total);
         if (unlock) { toast(`${unlock.pal.name} unlocked`, 'a new mount colourway is in the roster'); this.syncPalettes(); }
-        else toast('Drift seed', `${this.seeds.got.size} of ${this.seeds.pos.length} in this world`);
+        else toast('Drift seed', `${this.seeds.got.size} of ${this.seeds.pos.length} in this world · stamina restored`);
       }
     }
 
     // ring race
     if (this.race?.active) {
-      const res = this.race.update(r.pos);
-      if (res === 'ring') this.sound.chime(this.race.next);
+      const res = this.race.update(sel.pos);
+      if (res === 'ring') { this.sound.chime(this.race.next); if (sel.manual) sel.stamina = Math.min(1, sel.stamina + 0.2); }
       if (res === 'done') {
         const time = this.race.elapsed, best = store.get<number | null>(`best-${this.data.seed}`, null);
         const nb = best == null || time < best;
         if (nb) store.set(`best-${this.data.seed}`, time);
-        r.follow = null;
+        sel.follow = null;
         this.sound.chime(12);
         toast(nb ? 'New best time' : 'Run complete', `${time.toFixed(2)} s`);
         useUI.setState(st => ({ race: { ...st.race, active: false, last: time, best: nb ? time : best } }));
@@ -513,16 +699,22 @@ export class Engine {
     }
 
     // bonding with wild mounts
-    const near = this.wilds.nearest(r.pos);
+    const near = this.wilds.nearest(sel.pos);
     if (this.bondHold && near.dist < 40) this.bondT += dt; else this.bondT = Math.max(0, this.bondT - dt * 2);
     if (this.bondT >= 2.5) { this.bondT = 0; this.bondHold = false; this.bond(); }
 
-    this.updateCamera(dt, s.cam, s.photo);
-    this.sun.position.copy(this.camera.position).addScaledVector(sunDir, 1000);
-    this.sun.target.position.copy(this.camera.position);
+    // camera
+    this.rig.update(dt, this.camera, sel, T, {
+      mode: s.cam, photo: s.photo,
+      aim: sel.manual && this.input.locked ? this.input.aimDir() : null,
+      dragging: !!this.drag, idle: performance.now() - this.lastDrag > 2500,
+    });
+    const focus = sel.pos;
+    this.sun.position.copy(focus).addScaledVector(sunDir, 1500);
+    this.sun.target.position.copy(focus);
     this.sky.position.copy(this.camera.position);
 
-    // particles + rain respond to hour and weather
+    // particles, rain, grass, speed lines respond to hour, weather and motion
     const scale = this.gl.getDrawingBufferSize(new THREE.Vector2()).y * 0.5;
     if (this.pts.ff) { this.pts.ff.uniforms.uInt.value = 0.15 + p.glow * 1.3 * (1 - p.rain * 0.6); this.pts.ff.uniforms.uScale.value = scale; }
     if (this.pts.halo) { this.pts.halo.uniforms.uInt.value = Math.pow(p.glow, 1.4) * 0.55; this.pts.halo.uniforms.uScale.value = scale; }
@@ -530,11 +722,21 @@ export class Engine {
       const m = this.pts.mist.uniforms;
       m.uTint.value.copy(p.fog).lerp(p.hor, 0.3); m.uOp.value = 0.22 + p.glow * 0.06 + p.cover * 0.12; m.uScale.value = scale;
     }
+    this.splash.material.uniforms.uScale.value = scale;
     const rm = this.rain.material as THREE.ShaderMaterial;
     rm.uniforms.uRain.value = p.rain; rm.uniforms.uCam.value.copy(this.camera.position);
     rm.uniforms.uColor.value.copy(p.fog).lerp(new THREE.Color(1, 1, 1), 0.5);
     this.rain.visible = p.rain > 0.01;
     this.waterMat.uniforms.uRain.value = p.rain;
+    if (this.grass) {
+      this.grass.uCam.value.copy(this.camera.position);
+      this.grass.mesh.visible = this.camera.position.y - T.surface(this.camera.position.x, this.camera.position.z) < 170;
+    }
+    const sl = this.speedLines.material as THREE.ShaderMaterial;
+    const lineCam = s.cam === 'chase' || s.cam === 'seat';
+    sl.uniforms.uAmt.value = lerp(sl.uniforms.uAmt.value, lineCam && !s.photo ? clamp((sel.speed - 34) / 40, 0, 1) : 0, 1 - Math.exp(-dt * 4));
+    sl.uniforms.uSpeed.value = sel.speed;
+    sl.uniforms.uColor.value.setRGB(1, 1, 1).lerp(new THREE.Color(0.5, 1, 0.9), p.glow * 0.6);
 
     // distance culling on top of frustum culling
     const fast = s.gfx === 'fast';
@@ -543,21 +745,32 @@ export class Engine {
       c.visible = d < c.userData.max * (fast ? 0.7 : 1) && !(c.userData.grass && fast);
     }
 
-    this.updateLabels(s.sel, s.cam);
+    if (this.post && this.gfx !== 'fast') {
+      this.post.bloom.luminanceMaterial.threshold = lerp(1.15, 0.55, p.glow);
+      this.post.bloom.intensity = 0.5 + p.glow * 0.9 + fl * 0.8;
+      this.post.grade.exposure = p.exp + fl * 0.35;
+      this.post.grade.saturation = 1.06 + p.glow * 0.08;
+      this.post.focus(s.photo, sel.pos.distanceTo(this.camera.position));
+    }
 
-    this.sound.frame(r.speed, p.rain);
+    this.updateLabels(s.sel, s.cam);
+    this.miniT -= dt;
+    if (this.miniT < 0) { this.miniT = 1 / 30; this.drawMinimap(); this.drawCompass(); }
+
+    this.sound.frame(sel.speed, p.rain, sel.tuck);
     if (this.sound.on) {
-      if (r.flapped && s.cam !== 'cinema' && !s.photo) this.sound.whoosh(r.amp);
+      if (sel.flapped && s.cam !== 'cinema' && !s.photo) this.sound.whoosh(sel.amp);
       this.chirpT -= dt;
-      if (this.chirpT < 0) { this.chirpT = 0.3 + Math.random() * (3 - p.glow * 2.2); if ((r.low > 0.2 || p.glow > 0.4) && p.rain < 0.5) this.sound.chirp(); }
+      if (this.chirpT < 0) { this.chirpT = 0.3 + Math.random() * (3 - p.glow * 2.2); if ((sel.low > 0.2 || p.glow > 0.4) && p.rain < 0.5) this.sound.chirp(); }
     }
 
     this.syncHud(dt, near.mount?.pal ?? null, near.dist);
-    this.adaptDpr(dt, s.gfx);
+    this.adaptDpr(dt);
   }
 
-  render() {
-    this.gl.render(this.scene, this.camera);
+  render(dt: number) {
+    if (this.post && this.gfx !== 'fast') this.post.render(dt);
+    else this.gl.render(this.scene, this.camera);
     if (this.captureNext) {
       this.captureNext = false;
       this.gl.domElement.toBlob(b => {
@@ -575,7 +788,7 @@ export class Engine {
   private syncHud(dt: number, wildPal: MountPalette | null, wildDist: number) {
     this.hudT -= dt;
     if (this.hudT > 0 || !this.data || !this.terrain) return;
-    this.hudT = 0.2;
+    this.hudT = 0.15;
     const r = this.cur, places = this.data.places;
     const dists = places.map(pl => Math.hypot(pl.c[0] - r.pos.x, pl.c[2] - r.pos.z));
     let near = 0;
@@ -587,6 +800,9 @@ export class Engine {
         spd: Math.round(r.speed * 3.6),
         where: dists[near] < 520 ? places[near].name : 'Open sky',
         dists, near, fps: s.hud.fps, tris: this.gl.info.render.triangles,
+        stamina: r.stamina, locked: this.input.locked, pad: this.input.padActive,
+        pin: this.pin ? Math.round(Math.hypot(this.pin.x - r.pos.x, this.pin.z - r.pos.z)) : null,
+        pitch: r.pitch,
       },
       race: this.race?.active ? { ...s.race, next: this.race.next, time: this.race.elapsed } : s.race,
       bond: { name: wildPal?.name ?? null, dist: wildDist, progress: this.bondT / 2.5, swatch: wildPal ? swatch(wildPal) : null },
@@ -594,17 +810,15 @@ export class Engine {
     }));
   }
 
-  private adaptDpr(dt: number, gfx: string) {
+  private adaptDpr(dt: number) {
     const f = this.fps;
     f.acc += dt; f.n++; f.t += dt;
     if (f.t < 2) return;
     const fps = f.n / f.acc;
     f.t = f.acc = f.n = 0;
     useUI.setState(s => ({ hud: { ...s.hud, fps: Math.round(fps) } }));
-    const cap = gfx === 'high' ? Math.min(devicePixelRatio, 2) : gfx === 'fast' ? Math.min(devicePixelRatio, 1) * 0.75 : this.maxDpr;
-    if (gfx !== 'auto') { this.dpr = cap; return; }
-    if (fps < 32 && this.dpr > 0.55) this.dpr = Math.max(0.55, this.dpr - 0.15);
-    else if (fps > 55 && this.dpr < cap) this.dpr = Math.min(cap, this.dpr + 0.1);
+    if (fps < 34 && this.dpr > 0.6) this.dpr = Math.max(0.6, this.dpr - 0.15);
+    else if (fps > 56 && this.dpr < this.maxDpr) this.dpr = Math.min(this.maxDpr, this.dpr + 0.1);
   }
 
   private updateLabels(sel: number, cam: CamMode) {
@@ -614,86 +828,148 @@ export class Engine {
       if (!el) return;
       v.copy(r.pos).add(new V3(0, 6, 0)).project(this.camera);
       const dist = r.pos.distanceTo(this.camera.position);
-      const show = v.z < 1 && Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1 && dist < 1600 && !(i === sel && cam === 'seat');
+      const show = v.z < 1 && Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1 && dist < 1600 && !(i === sel && (cam === 'seat' || cam === 'chase'));
       el.style.display = show ? 'flex' : 'none';
       if (show) el.style.transform = `translate(${(v.x * 0.5 + 0.5) * w}px,${(-v.y * 0.5 + 0.5) * h - 14}px) translate(-50%,-100%)`;
     });
   }
 
-  /* ------------------------------------------------------------ camera */
+  /* ------------------------------------------------------------ overview: minimap, compass, world map */
 
-  /** Pull the camera toward the rider when rock sits between them. */
-  private unocclude(from: THREE.Vector3, to: THREE.Vector3) {
-    const obs = this.data!.obstacles, p = new V3();
-    let tMax = 1;
-    for (let i = 1; i <= 10; i++) {
-      const t = i / 10;
-      p.lerpVectors(from, to, t);
-      const hit = obs.some(o => o.t === 's'
-        ? Math.hypot(p.x - o.x, p.y - o.y, p.z - o.z) < o.r * 0.9
-        : p.y < o.top && Math.hypot(p.x - o.x, p.z - o.z) < o.r * 0.85);
-      if (hit) { tMax = Math.max(0.12, (i - 1) / 10); break; }
-    }
-    if (tMax < 1) to.lerpVectors(from, to, tMax);
+  /** Map pixel for a world point. */
+  private mp(x: number, z: number, size: number) { return [((x + INNER / 2) / INNER) * size, ((z + INNER / 2) / INNER) * size]; }
+
+  private drawMinimap() {
+    const cv = this.minimap, r = this.cur;
+    if (!cv || !this.mapCanvas || !r || !this.data) return;
+    const dpr = Math.min(devicePixelRatio, 2), css = cv.clientWidth || 160, S = Math.round(css * dpr);
+    if (cv.width !== S) { cv.width = cv.height = S; }
+    const g = cv.getContext('2d')!, c = S / 2, viewR = 520, k = (S / 2) / viewR;
+    const heading = Math.atan2(r.fwd.z, r.fwd.x), rot = -Math.PI / 2 - heading;
+    g.clearRect(0, 0, S, S);
+    g.save();
+    g.beginPath(); g.arc(c, c, c - 1, 0, TAU); g.clip();
+    g.fillStyle = '#0b1a24'; g.fillRect(0, 0, S, S);
+    g.translate(c, c); g.rotate(rot);
+    const px = INNER / MAP_SIZE;
+    g.imageSmoothingEnabled = true;
+    g.drawImage(this.mapCanvas, (-INNER / 2 - r.pos.x) * k, (-INNER / 2 - r.pos.z) * k, MAP_SIZE * px * k, MAP_SIZE * px * k);
+    const dot = (x: number, z: number, rad: number, fill: string, ring?: string) => {
+      g.beginPath(); g.arc((x - r.pos.x) * k, (z - r.pos.z) * k, rad * dpr, 0, TAU);
+      g.fillStyle = fill; g.fill();
+      if (ring) { g.lineWidth = 1.5 * dpr; g.strokeStyle = ring; g.stroke(); }
+    };
+    this.seeds?.pos.forEach((p, i) => { if (!this.seeds!.got.has(i)) dot(p.x, p.z, 2.4, '#ffd36a'); });
+    if (this.race?.active) this.race.rings.forEach((rg, i) => { if (i >= this.race!.next) dot(rg.p.x, rg.p.z, i === this.race!.next ? 4.5 : 2.5, i === this.race!.next ? '#5ff2d6' : 'rgba(95,242,214,.45)'); });
+    for (const m of this.wilds.mounts) dot(m.pos.x, m.pos.z, 3, '#ff6ad5');
+    this.riders.forEach(o => { if (o !== r) dot(o.pos.x, o.pos.z, 3.4, o.pal.glow, 'rgba(0,0,0,.5)'); });
+    if (this.pin) dot(this.pin.x, this.pin.z, 4.5, '#ffffff', '#5ff2d6');
+    g.restore();
+    // own arrow
+    g.save(); g.translate(c, c);
+    g.fillStyle = '#ffffff'; g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 1.5 * dpr;
+    g.beginPath(); g.moveTo(0, -9 * dpr); g.lineTo(6 * dpr, 7 * dpr); g.lineTo(0, 3.5 * dpr); g.lineTo(-6 * dpr, 7 * dpr); g.closePath(); g.fill(); g.stroke();
+    g.restore();
+    // north marker on the rim
+    const na = rot - Math.PI / 2;
+    g.fillStyle = '#5ff2d6'; g.font = `${600} ${11 * dpr}px "IBM Plex Mono", monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('N', c + Math.cos(na) * (c - 11 * dpr), c + Math.sin(na) * (c - 11 * dpr));
+    g.lineWidth = 2 * dpr; g.strokeStyle = 'rgba(95,242,214,.55)'; g.beginPath(); g.arc(c, c, c - 1.5 * dpr, 0, TAU); g.stroke();
   }
 
-  private updateCamera(dt: number, mode: CamMode, photo: boolean) {
-    const r = this.cur, cam = this.camera, T = this.terrain!;
-    if (!r) return;
-    const right = new V3().crossVectors(r.fwd, UPV).normalize();
-    const idle = performance.now() - this.lastDrag > 2500;
-    if (idle && !this.drag) { this.lookYaw *= 1 - dt * 1.2; this.lookPitch *= 1 - dt * 1.2; }
-    if (photo) mode = 'cinema';
-    let fov = 62, k = 3;
-    const pos = new V3(), look = new V3();
-    if (mode === 'chase') {
-      const back = r.fwd.clone().applyAxisAngle(UPV, this.lookYaw);
-      pos.copy(r.pos).addScaledVector(back, -this.chaseDist).add(new V3(0, this.chaseDist * 0.32 + this.lookPitch * 20, 0));
-      look.copy(r.pos).addScaledVector(r.fwd, 10).add(new V3(0, 2, 0));
-      k = 3.2;
-    } else if (mode === 'seat') {
-      r.root.updateMatrixWorld(true);
-      r.head.getWorldPosition(pos);
-      cam.position.copy(pos);
-      cam.quaternion.copy(r.root.quaternion).multiply(this.qFlip);
-      cam.rotateY(this.lookYaw);
-      cam.rotateX(-0.1 + this.lookPitch);
-      cam.fov = lerp(cam.fov, 72, 0.1); cam.updateProjectionMatrix();
-      this.camPos.copy(pos); this.camLook.copy(pos).addScaledVector(r.fwd, 10);
-      this.snap = false;
-      return;
-    } else if (mode === 'orbit') {
-      if (idle && !this.drag) this.orbitYaw += dt * 0.12;
-      const yaw = Math.atan2(r.fwd.x, r.fwd.z) + Math.PI + this.orbitYaw;
-      pos.set(Math.sin(yaw) * Math.cos(this.orbitPitch), Math.sin(this.orbitPitch), Math.cos(yaw) * Math.cos(this.orbitPitch)).multiplyScalar(this.orbitDist).add(r.pos);
-      look.copy(r.pos); k = 6;
-    } else {
-      const slow = photo ? 1.6 : 1;
-      this.shotT -= dt;
-      if (this.shotT <= 0) {
-        this.shot = (this.shot + 1) % 4;
-        this.shotT = (7 + Math.random() * 3) * slow;
-        if (this.shot === 1) this.shotPos.copy(r.pos).addScaledVector(r.fwd, r.speed * 4.5).addScaledVector(right, (Math.random() < 0.5 ? -1 : 1) * 30).add(new V3(0, -6, 0));
-        if (this.shot === 2) this.shotPos.copy(r.pos).addScaledVector(r.fwd, -60).addScaledVector(right, -80).add(new V3(0, 60, 0));
-        this.snap = true;
+  private drawCompass() {
+    const cv = this.compass, r = this.cur;
+    if (!cv || !r || !this.data) return;
+    const dpr = Math.min(devicePixelRatio, 2), W = Math.round((cv.clientWidth || 520) * dpr), H = Math.round((cv.clientHeight || 40) * dpr);
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const g = cv.getContext('2d')!;
+    g.clearRect(0, 0, W, H);
+    const bg = g.createLinearGradient(0, 0, W, 0);
+    bg.addColorStop(0, 'rgba(5,11,20,0)'); bg.addColorStop(0.15, 'rgba(5,11,20,.45)'); bg.addColorStop(0.85, 'rgba(5,11,20,.45)'); bg.addColorStop(1, 'rgba(5,11,20,0)');
+    g.fillStyle = bg; g.fillRect(0, H * 0.48, W, H * 0.52);
+    const taken: [number, number][] = [];
+    const bearing = (dx: number, dz: number) => Math.atan2(dx, -dz);
+    const head = bearing(r.fwd.x, r.fwd.z), span = (100 * Math.PI) / 180;
+    const xOf = (b: number) => { const d = Math.atan2(Math.sin(b - head), Math.cos(b - head)); return Math.abs(d) > span ? null : W / 2 + (d / span) * (W / 2); };
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (let deg = 0; deg < 360; deg += 15) {
+      const x = xOf((deg * Math.PI) / 180);
+      if (x == null) continue;
+      const card = deg % 90 === 0;
+      g.strokeStyle = card ? 'rgba(234,247,244,.9)' : 'rgba(234,247,244,.35)';
+      g.lineWidth = dpr;
+      g.beginPath(); g.moveTo(x, H * 0.62); g.lineTo(x, H * (card ? 0.95 : 0.82)); g.stroke();
+      if (card) { g.fillStyle = deg === 0 ? '#5ff2d6' : 'rgba(234,247,244,.95)'; g.font = `600 ${11 * dpr}px "IBM Plex Mono", monospace`; g.fillText('NESW'[deg / 90], x, H * 0.36); }
+    }
+    const marker = (x: number, z: number, color: string, label: string, size = 4) => {
+      const sx = xOf(bearing(x - r.pos.x, z - r.pos.z));
+      if (sx == null) return;
+      g.fillStyle = color;
+      g.beginPath(); g.moveTo(sx, H * 0.6); g.lineTo(sx - size * dpr, H * 0.6 - size * 1.6 * dpr); g.lineTo(sx + size * dpr, H * 0.6 - size * 1.6 * dpr); g.closePath(); g.fill();
+      if (label) {
+        g.font = `500 ${10 * dpr}px Figtree, sans-serif`;
+        const w = g.measureText(label).width + 8 * dpr, lx = clamp(sx, w / 2, W - w / 2);
+        if (taken.some(([a, b]) => lx + w / 2 > a && lx - w / 2 < b)) return;
+        taken.push([lx - w / 2, lx + w / 2]);
+        g.fillStyle = 'rgba(5,11,20,.55)'; g.fillRect(lx - w / 2, 0, w, H * 0.3);
+        g.fillStyle = 'rgba(234,247,244,.92)'; g.fillText(label, lx, H * 0.15);
       }
-      if (this.shot === 0) { pos.copy(r.pos).addScaledVector(right, 26).addScaledVector(r.fwd, -4).add(new V3(0, 3, 0)); look.copy(r.pos); fov = 40; k = 4; }
-      else if (this.shot === 1) { pos.copy(this.shotPos); look.copy(r.pos); fov = lerp(48, 30, clamp(1 - r.pos.distanceTo(this.shotPos) / 200, 0, 1)); k = 50; }
-      else if (this.shot === 2) { this.shotPos.addScaledVector(r.fwd, r.speed * 0.85 * dt); pos.copy(this.shotPos); look.copy(r.pos); fov = 34; k = 50; }
-      else { pos.copy(r.pos).addScaledVector(r.fwd, 15).add(new V3(0, 3.5, 0)).addScaledVector(right, 4); look.copy(r.pos).add(new V3(0, 1.5, 0)); fov = 55; k = 5; }
-    }
-    if (mode !== 'cinema' || this.shot === 0 || this.shot === 3) this.unocclude(r.pos, pos);
-    const minY = T.surface(pos.x, pos.z) + 2.5;
-    if (pos.y < minY) pos.y = minY;
-    const a = this.snap ? 1 : 1 - Math.exp(-dt * k);
-    this.camPos.lerp(pos, a);
-    this.camLook.lerp(look, this.snap ? 1 : 1 - Math.exp(-dt * 8));
-    this.snap = false;
-    cam.position.copy(this.camPos);
-    cam.lookAt(this.camLook);
-    cam.fov = lerp(cam.fov, fov, 0.06);
-    cam.updateProjectionMatrix();
+    };
+    const near = useUI.getState().hud.near;
+    if (this.pin) marker(this.pin.x, this.pin.z, '#ffffff', 'pin', 6);
+    if (this.race?.active) { const nr = this.race.rings[this.race.next]; if (nr) marker(nr.p.x, nr.p.z, '#5ff2d6', 'next ring', 6); }
+    const order = this.data.places.map((pl, i) => ({ pl, i, d: Math.hypot(pl.c[0] - r.pos.x, pl.c[2] - r.pos.z) })).sort((a, b) => a.d - b.d);
+    for (const { pl, i, d } of order) marker(pl.c[0], pl.c[2], i === near ? '#5ff2d6' : 'rgba(234,247,244,.7)', i === near && d < 520 ? '' : `${pl.name} ${d < 1000 ? Math.round(d / 10) * 10 + ' m' : (d / 1000).toFixed(1) + ' km'}`, 3.5);
+    const sn = this.seeds?.nearestOpen(r.pos);
+    if (sn) marker(sn.p.x, sn.p.z, '#ffd36a', '', 4);
+    const wild = this.wilds.nearest(r.pos).mount;
+    if (wild) marker(wild.pos.x, wild.pos.z, '#ff6ad5', '', 4);
+    g.fillStyle = '#5ff2d6';
+    g.beginPath(); g.moveTo(W / 2, H * 0.98); g.lineTo(W / 2 - 5 * dpr, H * 0.98 + 0.1); g.lineTo(W / 2, H * 0.7); g.lineTo(W / 2 + 5 * dpr, H * 0.98); g.closePath(); g.fill();
   }
+
+  /** Draw the full world map with places, riders, seeds, flocks, the race course and the pin. */
+  drawWorldMap(cv: HTMLCanvasElement) {
+    if (!this.mapCanvas || !this.data) return;
+    const dpr = Math.min(devicePixelRatio, 2), S = Math.round((cv.clientWidth || 600) * dpr);
+    if (cv.width !== S) cv.width = cv.height = S;
+    const g = cv.getContext('2d')!;
+    g.imageSmoothingEnabled = true;
+    g.drawImage(this.mapCanvas, 0, 0, S, S);
+    const at = (x: number, z: number) => this.mp(x, z, S);
+    const font = (px: number, w = 500) => `${w} ${px * dpr}px Figtree, system-ui, sans-serif`;
+    if (this.race) {
+      g.strokeStyle = this.race.active ? 'rgba(95,242,214,.85)' : 'rgba(95,242,214,.35)'; g.lineWidth = 1.5 * dpr; g.setLineDash([4 * dpr, 4 * dpr]);
+      g.beginPath(); this.race.rings.forEach((rg, i) => { const [x, y] = at(rg.p.x, rg.p.z); if (i) g.lineTo(x, y); else g.moveTo(x, y); }); g.stroke(); g.setLineDash([]);
+    }
+    this.seeds?.pos.forEach((p, i) => { if (this.seeds!.got.has(i)) return; const [x, y] = at(p.x, p.z); g.fillStyle = '#ffd36a'; g.beginPath(); g.arc(x, y, 2.6 * dpr, 0, TAU); g.fill(); });
+    for (const m of this.wilds.mounts) { const [x, y] = at(m.pos.x, m.pos.z); g.fillStyle = '#ff6ad5'; g.beginPath(); g.arc(x, y, 3 * dpr, 0, TAU); g.fill(); }
+    this.data.places.forEach(pl => {
+      const [x, y] = at(pl.c[0], pl.c[2]);
+      g.fillStyle = 'rgba(5,11,20,.55)'; g.font = font(13, 600); g.textAlign = 'center';
+      const w = g.measureText(pl.name).width + 14 * dpr;
+      g.beginPath(); g.roundRect(x - w / 2, y - 26 * dpr, w, 20 * dpr, 10 * dpr); g.fill();
+      g.fillStyle = '#eaf7f4'; g.fillText(pl.name, x, y - 12 * dpr);
+      g.fillStyle = '#5ff2d6'; g.beginPath(); g.arc(x, y, 3 * dpr, 0, TAU); g.fill();
+    });
+    this.riders.forEach((r, i) => {
+      const [x, y] = at(r.pos.x, r.pos.z), a = Math.atan2(r.fwd.z, r.fwd.x);
+      g.save(); g.translate(x, y); g.rotate(a + Math.PI / 2);
+      g.fillStyle = r.pal.glow; g.strokeStyle = i === useUI.getState().sel ? '#ffffff' : 'rgba(0,0,0,.6)'; g.lineWidth = (i === useUI.getState().sel ? 2 : 1) * dpr;
+      const s = (i === useUI.getState().sel ? 1.4 : 1) * dpr;
+      g.beginPath(); g.moveTo(0, -8 * s); g.lineTo(5.5 * s, 6 * s); g.lineTo(0, 3 * s); g.lineTo(-5.5 * s, 6 * s); g.closePath(); g.fill(); g.stroke();
+      g.restore();
+      g.font = font(11); g.fillStyle = '#eaf7f4'; g.textAlign = 'left'; g.fillText(RIDERS[i].name, x + 9 * dpr, y + 4 * dpr);
+    });
+    if (this.pin) {
+      const [x, y] = at(this.pin.x, this.pin.z);
+      g.strokeStyle = '#ffffff'; g.lineWidth = 2 * dpr; g.beginPath(); g.arc(x, y, 7 * dpr, 0, TAU); g.stroke();
+      g.beginPath(); g.moveTo(x, y - 12 * dpr); g.lineTo(x, y + 12 * dpr); g.moveTo(x - 12 * dpr, y); g.lineTo(x + 12 * dpr, y); g.stroke();
+    }
+  }
+
+  /** Convert a click on the world map (0..1 in both axes) to world x/z. */
+  mapToWorld(u: number, v: number) { return { x: -INNER / 2 + u * INNER, z: -INNER / 2 + v * INNER }; }
 }
 
 export const engine = new Engine();

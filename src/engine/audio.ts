@@ -6,6 +6,8 @@ export class Sound {
   private windG!: GainNode;
   private rainG!: GainNode;
   private pad!: GainNode;
+  private whistleF!: BiquadFilterNode;
+  private whistleG!: GainNode;
   on = false;
 
   private noiseBuffer(sec: number, brown: boolean) {
@@ -38,6 +40,13 @@ export class Sound {
     this.rainG = ac.createGain(); this.rainG.gain.value = 0;
     rain.connect(rf).connect(this.rainG).connect(this.master);
     rain.start();
+    const whistle = ac.createBufferSource();
+    whistle.buffer = this.noiseBuffer(2, false);
+    whistle.loop = true;
+    this.whistleF = ac.createBiquadFilter(); this.whistleF.type = 'bandpass'; this.whistleF.frequency.value = 900; this.whistleF.Q.value = 6;
+    this.whistleG = ac.createGain(); this.whistleG.gain.value = 0;
+    whistle.connect(this.whistleF).connect(this.whistleG).connect(this.master);
+    whistle.start();
     this.pad = ac.createGain(); this.pad.gain.value = 0.05;
     const pf = ac.createBiquadFilter(); pf.type = 'lowpass'; pf.frequency.value = 900;
     this.pad.connect(pf).connect(this.master);
@@ -60,12 +69,34 @@ export class Sound {
     return this.on;
   }
 
-  frame(speed: number, rain: number) {
+  frame(speed: number, rain: number, tuck = 0) {
     if (!this.ac || !this.on) return;
     const t = this.ac.currentTime;
     this.windF.frequency.setTargetAtTime(300 + speed * 14, t, 0.3);
     this.windG.gain.setTargetAtTime(0.12 + speed / 180, t, 0.3);
     this.rainG.gain.setTargetAtTime(rain * 0.12, t, 0.5);
+    const fast = Math.max(0, (speed - 45) / 50);
+    this.whistleF.frequency.setTargetAtTime(700 + speed * 16, t, 0.3);
+    this.whistleG.gain.setTargetAtTime(Math.min(0.09, fast * 0.05 + tuck * fast * 0.05), t, 0.4);
+  }
+
+  thump(k: number) {
+    if (!this.ac || !this.on) return;
+    const ac = this.ac, t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(38, t + 0.35);
+    g.gain.setValueAtTime(0.5 * k, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+    o.connect(g).connect(this.master); o.start(t); o.stop(t + 0.5);
+    this.whoosh(k * 1.5);
+  }
+
+  spray() {
+    if (!this.ac || !this.on) return;
+    const ac = this.ac, len = (ac.sampleRate * 0.35) | 0, b = ac.createBuffer(1, len, ac.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+    const s = ac.createBufferSource(); s.buffer = b;
+    const f = ac.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 2400;
+    const g = ac.createGain(); g.gain.value = 0.12;
+    s.connect(f).connect(g).connect(this.master); s.start();
   }
 
   chirp() {

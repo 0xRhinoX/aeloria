@@ -8,9 +8,6 @@ import { regrow, toggleFullscreen } from './ui/actions';
 import type { Weather } from './engine/palette';
 import { Activities, Compass, Controls, Hud, Intro, Labels, Loading, PauseMenu, PhotoBar, Reticle, Roster, Toast, TouchControls, WorldMap, fade } from './ui/Panels';
 
-let pausedAt = 0;
-useUI.subscribe((s, prev) => { if (s.paused && !prev.paused) pausedAt = performance.now(); });
-
 const quality = detectQuality();
 const gfx = store.get<Gfx | null>('gfx', null) ?? defaultGfx(quality);
 const startDpr = Math.min(devicePixelRatio, quality === 'low' ? 1 : 1.5);
@@ -61,8 +58,7 @@ function useKeys() {
       if (s.loading) return;
       if (e.code === 'KeyK') { toggleFullscreen(); return; }
       if (s.paused) {
-        // the browser can deliver Esc right after it took the pointer lock away and we paused: don't undo that
-        if ((e.code === 'Escape' && performance.now() - pausedAt > 400) || e.code === 'KeyP') engine.pause(false);
+        if (e.code === 'Escape' || e.code === 'KeyP') engine.pause(false);
         if (e.code === 'KeyO') engine.toggleSound();
         return;
       }
@@ -75,7 +71,8 @@ function useKeys() {
         case 'Escape':
           if (s.mapOpen) useUI.setState({ mapOpen: false });
           else if (s.photo) useUI.setState({ photo: false });
-          else engine.pause(true);
+          // this Esc just freed the mouse (some browsers still deliver it): leave it at that
+          else if (performance.now() - engine.lockLostAt > 400) engine.pause(true);
           break;
         case 'KeyH': useUI.setState({ uiHidden: !s.uiHidden }); break;
         case 'KeyM': useUI.setState({ mapOpen: !s.mapOpen }); if (!s.mapOpen) engine.input.releaseLock(); break;

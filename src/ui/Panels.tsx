@@ -296,7 +296,7 @@ export function Reticle() {
   return (
     <div className="reticle" aria-hidden="true">
       <i />
-      <small>Esc frees the cursor · F hands back to autopilot</small>
+      <small>Esc frees the cursor, Esc again pauses · F hands back to autopilot</small>
     </div>
   );
 }
@@ -462,7 +462,7 @@ const EXPLORE: Row[] = [
   ['Sound', 'O', '', 'Below'],
   ['Full screen', 'K', '', 'Below'],
   ['New world', 'N', '', 'Settings → World'],
-  ['Pause and this help', 'Esc', '', 'Pause button, top right'],
+  ['Pause and this help', 'Esc (twice while aiming with the mouse)', '', 'Pause button, top right'],
   ['Resume', 'Esc', 'Start', 'Resume'],
 ];
 

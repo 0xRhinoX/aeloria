@@ -62,7 +62,7 @@ The flight model is energy based. Banking turns the mount. Diving trades height 
 | `H` | hide the interface |
 | `O` | sound (on by default, starts on your first click or key press) |
 | `K` | full screen |
-| `Esc` | pause, with every control explained |
+| `Esc` | pause, with every control explained (while aiming with the mouse, the first `Esc` only frees the cursor) |
 | `N` | new world |
 
 ## Finding your way

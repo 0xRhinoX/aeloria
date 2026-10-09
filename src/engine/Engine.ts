@@ -137,6 +137,7 @@ export class Engine {
   private lastImpact = 0;
   private lastTrick = 0;
   private pausedAt = 0;
+  lockLostAt = -1e9;
   private stallT = 0;
 
   // pointer
@@ -177,7 +178,8 @@ export class Engine {
     this.wilds = new Wilds(scene);
     this.bindPointer(gl.domElement);
     this.armSound();
-    this.input.onLockLost = () => { const s = useUI.getState(); if (s.manual && !s.mapOpen && !s.photo) this.pause(true); };
+    // the browser frees the cursor on Esc; that Esc should only do that, a second one opens the menu
+    this.input.onLockLost = () => { this.lockLostAt = performance.now(); };
     this.applyGfx(useUI.getState().gfx);
     this.ready = true;
   }
@@ -329,12 +331,14 @@ export class Engine {
 
     if (!this.riders.length) this.riders = RIDERS.map((r, i) => new Rider(r, i, this.scene));
     const saved = store.get<Record<number, string>>('rider-pal', {});
+    const keepReins = useUI.getState().manual, sel = useUI.getState().sel;
     this.riders.forEach((r, i) => {
-      r.manual = false; r.follow = null; r.cruiseOverride = null;
+      r.manual = keepReins && i === sel; r.follow = null; r.cruiseOverride = null;
       const p = saved[i] && this.allPalettes().find(x => x.id === saved[i]);
       if (p && p.id !== r.pal.id) r.setPalette(p);
       r.spawn(this.flight, i % d.places.length);
     });
+    if (keepReins) this.input.syncAim(this.riders[sel].yaw, this.riders[sel].pitch);
     this.pin = null;
     this.trails.reset();
     this.rig.snap = true;
@@ -342,7 +346,6 @@ export class Engine {
       seed: d.seed,
       places: d.places.map(p => ({ name: p.name, sub: p.sub })),
       stats: d.stats,
-      manual: false,
       race: { active: false, next: 0, total: d.rings.length, time: 0, best: store.get<number | null>(`best-${d.seed}`, null), last: null },
       seeds: { got: this.seeds.got.size, total: d.seeds.length, nearest: null },
     });
@@ -379,8 +382,14 @@ export class Engine {
   select(i: number) {
     const s = useUI.getState();
     if (i === s.sel || !this.riders[i]) return;
-    this.reins(false);
     if (s.race.active) this.stopRace();
+    // flying yourself carries over to the new rider
+    const old = this.riders[s.sel], next = this.riders[i];
+    if (old) old.manual = false;
+    if (s.manual) {
+      next.manual = true; next.follow = null; next.cruiseOverride = null;
+      this.input.syncAim(next.yaw, next.pitch);
+    }
     useUI.setState({ sel: i });
     this.rig.snap = true;
     this.trails.reset();
@@ -469,7 +478,13 @@ export class Engine {
   }
   findFlock() {
     const r = this.cur; if (!r) return;
-    this.reins(false);
+    if (r.manual) {
+      const { mount } = this.wilds.nearest(r.pos);
+      if (!mount) return;
+      this.pin = mount.pos.clone();
+      toast('Wild flock marked', 'follow the pin on your compass, hold B when you are close');
+      return;
+    }
     r.follow = () => {
       const { mount } = this.wilds.nearest(r.pos);
       if (!mount) return null;
@@ -480,8 +495,14 @@ export class Engine {
   }
   findSeed() {
     const r = this.cur; if (!r || !this.seeds) return;
-    this.reins(false);
     const seeds = this.seeds;
+    if (r.manual) {
+      const s = seeds.nearestOpen(r.pos);
+      if (!s) return;
+      this.pin = s.p.clone();
+      toast('Drift seed marked', 'follow the pin on your compass');
+      return;
+    }
     r.follow = () => seeds.nearestOpen(r.pos)?.p ?? null;
     toast('Seeking drift seeds', 'your rider will fly through the nearest ones');
   }
@@ -710,6 +731,9 @@ export class Engine {
     }
     this.splash.update(dt);
     this.trails.update(sel.mount.tips, sel.mount.body, new THREE.Color(sel.pal.glow), clamp((sel.speed - 26) / 40, 0, 1) * (s.cam === 'seat' ? 0.35 : 0.8));
+
+    // flying yourself, nobody else clears the pin: drop it on arrival
+    if (sel.manual && this.pin && sel.pos.distanceTo(this.pin) < 60) { this.pin = null; toast('Arrived', 'pin cleared'); }
 
     // drift seeds
     if (this.seeds) {

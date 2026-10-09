@@ -11,10 +11,12 @@ npm run build      # type-check + production build into dist/
 npm run preview    # serve the production build
 ```
 
-## Deploy to Vercel
+## Deploy to Cloudflare
 
-1. Import the repository in Vercel.
-2. Vercel detects Vite automatically. `vercel.json` sets the build command (`npm run build`), the output directory (`dist`) and long-term caching for hashed assets.
+1. In the Cloudflare dashboard, go to Workers & Pages → Create → Import a repository and pick this repo.
+2. Build command: `npm run build`. Deploy command: `npx wrangler deploy`.
+3. `wrangler.jsonc` serves the `dist` folder as static assets, and `public/_headers` sets long-term caching for hashed assets.
+4. Attach a custom domain under the Worker's Domains tab → Add Domain.
 
 It is a fully static site, so no server or environment variables are needed.
 

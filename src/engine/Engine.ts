@@ -127,6 +127,7 @@ export class Engine {
   private fps = { acc: 0, n: 0, t: 0 };
   dpr = 1;
   maxDpr = 1.5;
+  private dprHold = 0;
   private chirpT = 0;
   private sprayT = 0;
   private captureNext = false;
@@ -813,12 +814,14 @@ export class Engine {
   private adaptDpr(dt: number) {
     const f = this.fps;
     f.acc += dt; f.n++; f.t += dt;
+    this.dprHold -= dt;
     if (f.t < 2) return;
     const fps = f.n / f.acc;
     f.t = f.acc = f.n = 0;
     useUI.setState(s => ({ hud: { ...s.hud, fps: Math.round(fps) } }));
-    if (fps < 34 && this.dpr > 0.6) this.dpr = Math.max(0.6, this.dpr - 0.15);
-    else if (fps > 56 && this.dpr < this.maxDpr) this.dpr = Math.min(this.maxDpr, this.dpr + 0.1);
+    // after a drop, wait before raising again so the resolution doesn't bounce up and down
+    if (fps < 34 && this.dpr > 0.6) { this.dpr = Math.max(0.6, this.dpr - 0.15); this.dprHold = 10; }
+    else if (fps > 56 && this.dpr < this.maxDpr && this.dprHold <= 0) this.dpr = Math.min(this.maxDpr, this.dpr + 0.1);
   }
 
   private updateLabels(sel: number, cam: CamMode) {

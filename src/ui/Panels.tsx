@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { engine } from '../engine/Engine';
 import { RIDERS, swatch } from '../engine/creatures';
 import type { Weather } from '../engine/palette';
-import { useUI, type CamMode, type Gfx } from '../state/store';
+import { store, useUI, type CamMode, type Gfx } from '../state/store';
 import { canFullscreen, regrow, toggleFullscreen } from './actions';
 
 const X_URL = 'https://x.com/0xRhinoX', POKEABLE_URL = 'https://pokeable.app/';
@@ -519,6 +519,29 @@ export function PauseMenu() {
           <button className="btn grow" data-sound aria-pressed={s.sound} onClick={() => engine.toggleSound()}>{s.sound ? 'Sound on' : 'Sound off'}{!s.touch && <kbd>O</kbd>}</button>
         </div>
         <div className="by pause-by"><Credits /></div>
+      </div>
+    </div>
+  );
+}
+
+/** First visits only: say plainly that the mount is on autopilot and how to take over, until the player has flown once. */
+export function ReinsHint() {
+  const loading = useUI(s => s.loading), manual = useUI(s => s.manual), touch = useUI(s => s.touch);
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (loading || store.get('took-reins', false)) return;
+    const on = setTimeout(() => setShow(true), 3600), off = setTimeout(() => setShow(false), 3600 + 10000);
+    return () => { clearTimeout(on); clearTimeout(off); };
+  }, [loading]);
+  useEffect(() => { if (manual) { store.set('took-reins', true); setShow(false); } }, [manual]);
+  if (!show || manual) return null;
+  return (
+    <div className="panel reins-hint" role="status">
+      <span className="eyebrow">Autopilot</span>
+      <p>Your mount is flying itself. {touch ? <>Tap <b>Take reins</b> to fly yourself.</> : <>Press <kbd>F</kbd> to take the reins and fly yourself.</>}</p>
+      <div className="row">
+        <button className="btn primary" onClick={() => engine.reins(true)}>Take reins{!touch && <kbd>F</kbd>}</button>
+        <button className="btn" onClick={() => setShow(false)}>Keep watching</button>
       </div>
     </div>
   );

@@ -33,7 +33,7 @@ It is a fully static site, so no server or environment variables are needed.
 | Lumen Forest | rainforest giants, glowing pods, trumpet flowers, ferns, mushrooms and boulders |
 | Amber Plains | dense grass and umbrella trees under drifting islands |
 | Mirror Lake | water with depth colour, shoreline foam and glowing plankton, under a banded gas giant |
-| The Leviathan | a 300 m sky whale swimming a slow figure-eight over the whole world, trailing glowing tendrils and spores |
+| The Leviathan | a 300 m sky whale swimming a slow figure-eight over the whole world, with a glowing garden on its back and tendrils streaming from its belly |
 
 ## Flying
 
@@ -88,7 +88,7 @@ Every preset adjusts the pixel ratio on the fly to hold the frame rate. The choi
 
 - **Glow trail:** riders flying low make the ground and plants ripple with light, strongest at night. Wingtips leave light trails at speed.
 - **Skyveil Run:** a ring race through the Hanging Peaks, with best times saved per seed.
-- **The Leviathan:** a sky whale that follows its own path like a snake, so turns ripple down its 300 m body. Its route rises smoothly over the floating isles and the Elder Tree. Its body is solid, and flying alongside it puts you in its slipstream, which pushes you along and restores stamina. Every minute or so it sings, and the whole world's glow swells in answer. It shows on the compass, minimap and world map.
+- **The Leviathan:** a sky whale that follows its own path like a snake, so turns ripple down its 300 m body. Its route rises smoothly over the floating isles and the Elder Tree. Its body, flippers and flukes are solid, and flying alongside it puts you in its slipstream, which pushes you along and restores stamina. Every minute or so it sings, exhales a glowing spout, and the whole world's glow swells in answer. It shows on the compass, minimap and world map.
 - **Wild mounts:** riderless flocks circle the peaks and plains. Fly within 40 m and hold Bond for 2.5 s to take the wild mount. Your old mount returns to the wild, and the new colourway is kept.
 - **Drift seeds:** 60 glowing seeds per world. Collecting them unlocks the Aurora (10), Obsidian (25) and Sunbloom (45) colourways.
 - **Weather:** clear, mist, rain and storm, with valley fog, rain streaks, rippling water, lightning and thunder.
@@ -113,6 +113,7 @@ Every preset adjusts the pixel ratio on the fly to hold the frame rate. The choi
   - backlit wing membranes,
   - height fog that fills valleys and scatters toward the sun.
 - **Post-processing** (`src/engine/post.ts`, pmndrs `postprocessing`): HDR render, mipmap bloom, then one grade pass (exposure, ACES, saturation, vignette). Depth of field is on in photo mode.
+- **The Leviathan is shaped on the GPU** (`src/engine/leviathan.ts`). The CPU lays its spine along the path each frame and uploads it as a small float texture. The vertex shader builds a smooth 25k-vertex body from it, and the fragment shader paints the skin per pixel: countershading, mottling, throat pleats, rows of lights, glowing spine chevrons, moss, tubercles, barnacles and the eye, with fine relief from a procedural height field. Its flippers and flukes are lofted from airfoil sections, the garden on its back is one instanced draw placed from the same spine texture, and its tendrils trail along the path it has just swum.
 - **Instancing in spatial chunks:** plants, trees and boulders are `InstancedMesh` tiles with their own bounding spheres, so frustum culling and distance culling skip whole tiles.
 
 ```

@@ -91,10 +91,10 @@ export class Engine {
   pts: { ff?: THREE.ShaderMaterial; halo?: THREE.ShaderMaterial; mist?: THREE.ShaderMaterial } = {};
   riders: Rider[] = [];
   wilds!: Wilds;
-  leviathan = new Leviathan();
+  leviathan!: Leviathan;
   /** the autopilot target used while riding alongside the Leviathan */
   private levFollow: (() => THREE.Vector3 | null) | null = null;
-  /** where the escorting rider should sit: beside the whale's front flank */
+  /** where the escorting rider should sit: above the whale's back, a little to one side */
   private levEscort: (() => THREE.Vector3) | null = null;
   private inWake = false;
   private heardSong = false;
@@ -170,7 +170,9 @@ export class Engine {
     sh.mapSize.set(2048, 2048);
     Object.assign(sh.camera, { left: -230, right: 230, top: 230, bottom: -230, near: 1, far: 3200 });
     sh.bias = -0.0004; sh.normalBias = 0.8;
-    scene.add(this.sky, this.water, this.sun, this.sun.target, this.hemi, this.rain, this.trails.mesh, this.speedLines, this.splash.points, this.leviathan.group);
+    scene.add(this.sky, this.water, this.sun, this.sun.target, this.hemi, this.rain, this.trails.mesh, this.speedLines, this.splash.points);
+    this.leviathan = new Leviathan(quality);
+    scene.add(this.leviathan.group);
 
     const bump = quality === 'low' ? 0 : 1;
     const leaves = makeLeafAtlas(Math.min(8, gl.capabilities.getMaxAnisotropy()));

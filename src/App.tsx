@@ -81,6 +81,7 @@ function useKeys() {
         case 'KeyP': useUI.setState({ photo: !s.photo }); break;
         case 'KeyR': if (s.race.active) engine.stopRace(); else engine.startRace(fade); break;
         case 'KeyG': engine.findFlock(); break;
+        case 'KeyL': engine.findLeviathan(); break;
         case 'KeyB': engine.bondHold = true; break;
       }
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();

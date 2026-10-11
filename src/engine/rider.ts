@@ -11,6 +11,8 @@ export interface Solids {
   arches: { base: THREE.Vector3; side: THREE.Vector3; R: number; tube: number }[];
   pillars: { x: number; z: number; r: number; top: number }[];
   elder: { x: number; y: number; z: number };
+  /** moving spheres (the Leviathan's body) as x, y, z, r, refreshed every frame */
+  movers: [number, number, number, number][];
 }
 
 export interface FlightWorld {
@@ -58,6 +60,14 @@ export function avoid(pos: THREE.Vector3, des: THREE.Vector3, obstacles: Obstacl
   if (r > BOUND) { des.x -= (pos.x / r) * (r - BOUND) * 0.03; des.z -= (pos.z / r) * (r - BOUND) * 0.03; }
 }
 
+/** Steer `des` away from moving spheres (the Leviathan). */
+function avoidMovers(pos: THREE.Vector3, des: THREE.Vector3, movers: Solids['movers'], margin: number) {
+  for (const [x, y, z, r] of movers) {
+    const dx = pos.x - x, dy = pos.y - y, dz = pos.z - z, d = Math.hypot(dx, dy, dz), m = r + margin;
+    if (d < m && d > 0) { const k = ((m - d) / margin) * 2.4 / d; des.x += dx * k; des.y += dy * k; des.z += dz * k; }
+  }
+}
+
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** Find the nearest exit from any solid the point is inside. Returns the push normal and depth, or null. */
@@ -95,6 +105,10 @@ export function penetration(p: THREE.Vector3, S: Solids, out: THREE.Vector3): nu
       const toTop = c.top - p.y, toSide = r - h;
       if (toTop < toSide) cand(0, 1, 0, toTop + 0.5); else cand(dx, 0, dz, toSide + 0.5);
     }
+  }
+  for (const [x, y, z, r] of S.movers) {
+    const dx = p.x - x, dy = p.y - y, dz = p.z - z, d = Math.hypot(dx, dy, dz);
+    if (d < r + 1.5) cand(dx, dy, dz, r + 1.5 - d);
   }
   {
     const e = S.elder, dx = p.x - e.x, dy = p.y - (e.y + 162), dz = p.z - e.z;
@@ -141,6 +155,16 @@ export class Rider {
   /** dynamic target (race ring, wild mount, map pin) that overrides the tour while set */
   follow: (() => THREE.Vector3 | null) | null = null;
   private riderFig: ReturnType<typeof buildRider>;
+  /** low-passed autopilot heading, so waypoint switches and avoidance blend instead of snapping */
+  private autoAim = new THREE.Vector3();
+  /** smoothed ground height ahead, so the autopilot does not bob over every bump */
+  private gndS = -1e9;
+  /** 0..1, how hard avoidance is pulling; lets the autopilot react sharply only when it must */
+  private danger = 0;
+  /** autopilot wingbeat latch (hysteresis around cruise speed) */
+  private autoFlap = false;
+  /** ramped stick input, so keyboard taps do not snap the mount */
+  private stick = { x: 0, y: 0 };
   private tmp = new THREE.Vector3();
   private n = new THREE.Vector3();
 
@@ -184,12 +208,22 @@ export class Rider {
     this.speed = 30;
     this.queue = [];
     this.target = null;
+    this.resetSmoothing();
+  }
+
+  /** Start the smoothed controllers from the current heading (after spawning, placing or taking the reins). */
+  resetSmoothing() {
+    this.autoAim.copy(this.fwd);
+    this.gndS = -1e9;
+    this.danger = 0;
+    this.stick.x = this.stick.y = 0;
   }
 
   /** Place the rider at a point facing a direction (race start, map pin). */
   placeAt(p: THREE.Vector3, dir: THREE.Vector3) {
     this.pos.copy(p);
     this.setDir(dir);
+    this.resetSmoothing();
   }
 
   nextTarget(w: FlightWorld) {
@@ -208,24 +242,59 @@ export class Rider {
 
     if (auto) {
       const f = this.follow?.();
-      if (!f && (!this.target || this.pos.distanceTo(this.target) < 45)) this.nextTarget(w);
+      if (!f && (!this.target || this.pos.distanceTo(this.target) < 70)) this.nextTarget(w);
       const goal = f ?? this.target;
-      aim = goal ? this.tmp.copy(goal).sub(this.pos).normalize() : this.fwd.clone();
-      avoid(this.pos, aim, w.obstacles, 38);
-      const ahead = this.pos.clone().addScaledVector(this.fwd, this.speed * 1.6);
-      const gnd = Math.max(T.groundY(ahead.x, ahead.z), T.groundY(this.pos.x, this.pos.z), WL);
-      if (this.pos.y < gnd + 32) aim.y += (gnd + 32 - this.pos.y) * 0.05;
+      // blend toward the goal slowly (a gentle sightseeing turn), then add avoidance on top so rock still gets a quick response
+      const want = goal ? this.tmp.copy(goal).sub(this.pos).normalize() : this.fwd.clone();
+      want.y = clamp(want.y, -0.45, 0.45);
+      if (this.autoAim.lengthSq() < 0.5) this.autoAim.copy(this.fwd);
+      this.autoAim.lerp(want, 1 - Math.exp(-dt * (f ? 1.6 : 0.8))).normalize();
+      aim = this.autoAim.clone();
+      avoid(this.pos, aim, w.obstacles, 40);
+      avoidMovers(this.pos, aim, w.solids.movers, 26);
+      const push = aim.distanceTo(this.autoAim);
+      // ground clearance from the highest of three look-ahead samples, smoothed so the line stays calm
+      let gnd = Math.max(T.groundY(this.pos.x, this.pos.z), WL);
+      for (const k of [1, 2, 3.2]) { const ax = this.pos.x + this.fwd.x * this.speed * k, az = this.pos.z + this.fwd.z * this.speed * k; gnd = Math.max(gnd, T.groundY(ax, az)); }
+      this.gndS = this.gndS < -1e8 ? gnd : gnd > this.gndS ? lerp(this.gndS, gnd, 1 - Math.exp(-dt * 3)) : lerp(this.gndS, gnd, 1 - Math.exp(-dt * 0.6));
+      if (this.pos.y < this.gndS + 40) aim.y += (this.gndS + 40 - this.pos.y) * 0.03;
+      const lowK = clamp((this.gndS + 14 - this.pos.y) / 10, 0, 1);
+      const d = Math.max(clamp((push - 0.3) * 2, 0, 1), lowK);
+      this.danger = d > this.danger ? d : lerp(this.danger, d, 1 - Math.exp(-dt * 1.5));
       aim.normalize();
-      aim.y = clamp(aim.y, -0.7, 0.7);
+      // climb only as steeply as airspeed allows (wings can hold about 20° at cruise); near the ground, climb anyway
+      const maxClimb = Math.max(lerp(0.08, 0.42, clamp((this.speed - 17) / 14, 0, 1)), lowK * 0.6);
+      aim.y = clamp(aim.y, -0.5, maxClimb);
       const cruise = this.cruiseOverride ?? this.cruise;
-      wantFlap = this.speed < cruise - 1 || aim.y > 0.15;
-      wantDive = aim.y < -0.55;
+      if (this.speed < cruise - 3 || aim.y > 0.25) this.autoFlap = true;
+      else if (this.speed > cruise + 1 && aim.y < 0.15) this.autoFlap = false;
+      wantFlap = this.autoFlap;
+      wantDive = aim.y < -0.45;
     } else {
-      sx = ctl.x; sy = ctl.y; wantFlap = ctl.flap; wantDive = ctl.dive;
+      // ramp keyboard input over ~0.2 s; analog sticks pass through almost unchanged
+      const ramp = 1 - Math.exp(-dt * 9);
+      this.stick.x += (ctl.x - this.stick.x) * ramp;
+      this.stick.y += (ctl.y - this.stick.y) * ramp;
+      if (Math.abs(ctl.x) < 0.05 && Math.abs(this.stick.x) < 0.05) this.stick.x = 0;
+      if (Math.abs(ctl.y) < 0.05 && Math.abs(this.stick.y) < 0.05) this.stick.y = 0;
+      sx = this.stick.x; sy = this.stick.y; wantFlap = ctl.flap; wantDive = ctl.dive;
       if (Math.abs(sx) < 0.05 && Math.abs(sy) < 0.05 && ctl.aim) aim = this.tmp.copy(ctl.aim);
       if (w.assist) {
         // gentle help: lean away from rock ahead and pull up before the ground
-        if (aim) avoid(this.pos, aim, w.obstacles, 14);
+        if (aim) { avoid(this.pos, aim, w.obstacles, 14); avoidMovers(this.pos, aim, w.solids.movers, 18); }
+        else {
+          // steering by keys or stick: probe ahead and nudge the stick away from rock, less while you steer hard yourself
+          const probe = this.tmp.copy(this.pos).addScaledVector(this.fwd, Math.max(this.speed, 20) * 0.8);
+          const want = this.fwd.clone();
+          avoid(probe, want, w.obstacles, 22); avoidMovers(probe, want, w.solids.movers, 26);
+          if (want.distanceToSquared(this.fwd) > 1e-4) {
+            want.normalize();
+            const yawErr = wrap(Math.atan2(want.x, want.z) - this.yaw), pitchErr = Math.asin(clamp(want.y, -1, 1)) - this.pitch;
+            const k = 1 - Math.min(1, Math.abs(sx) + Math.abs(sy)) * 0.6;
+            sx = clamp(sx - clamp(yawErr * 2.2, -0.8, 0.8) * k, -1, 1);
+            sy = clamp(sy + clamp(pitchErr * 2.2, -0.8, 0.8) * k, -1, 1);
+          }
+        }
         const ahead = this.pos.clone().addScaledVector(this.fwd, Math.max(this.speed, 20) * 1.1);
         const gnd = Math.max(T.groundY(ahead.x, ahead.z), WL);
         if (ahead.y < gnd + 6 && this.fwd.y < 0.2) sy = Math.max(sy, clamp((gnd + 6 - ahead.y) / 12, 0, 1));
@@ -238,15 +307,18 @@ export class Rider {
     if (aim && Math.abs(sy) < 0.05) {
       aim.normalize();
       const yawErr = wrap(Math.atan2(aim.x, aim.z) - this.yaw);
-      targetRoll = clamp(-yawErr * 2.1, -1.15, 1.15);
-      pitchRate = clamp((Math.asin(clamp(aim.y, -1, 1)) - this.pitch) * 2.4, -1.3, 1.3);
+      // the autopilot banks gently and eases its pitch, but steers as hard as a player near rock or ground; mouse aim stays crisp
+      const k = auto ? this.danger : 1, lim = lerp(0.7, 1.15, k), pl = lerp(0.45, 1.3, k);
+      targetRoll = clamp(-yawErr * lerp(1.3, 2.1, k), -lim, lim);
+      pitchRate = clamp((Math.asin(clamp(aim.y, -1, 1)) - this.pitch) * lerp(1.3, 2.4, k), -pl, pl);
     } else {
-      targetRoll = sx * 1.15;
-      pitchRate = sy * 1.2;
-      if (Math.abs(sy) < 0.05) pitchRate = (-0.04 - this.pitch) * 0.6;
+      targetRoll = sx * 1.05;
+      pitchRate = sy * 1.05;
+      // stick released: level the nose (hold height with flight assist, a shallow glide without)
+      if (Math.abs(sy) < 0.05) pitchRate = ((w.assist ? 0 : -0.04) - this.pitch) * (w.assist ? 1.4 : 0.6);
     }
     if (this.speed < STALL) pitchRate -= (STALL - this.speed) * 0.3;
-    this.roll = lerp(this.roll, targetRoll, 1 - Math.exp(-dt * 4));
+    this.roll = lerp(this.roll, targetRoll, 1 - Math.exp(-dt * (auto ? lerp(1.8, 4, this.danger) : 4)));
     this.pitch = clamp(this.pitch + pitchRate * dt, -1.3, 1.15);
     this.yaw -= (Math.tan(clamp(this.roll, -1.25, 1.25)) * G / Math.max(this.speed, 12)) * 1.6 * dt;
     this.syncFwd();
@@ -254,15 +326,23 @@ export class Rider {
     // energy: gravity along the flight path, drag, wingbeats
     this.tuck = lerp(this.tuck, wantDive ? 1 : 0, 1 - Math.exp(-dt * 4));
     let cd = lerp(CD, CD_TUCK, this.tuck) * (1 + Math.abs(this.roll) * 0.25);
-    if (auto && this.speed > 48) cd *= 3;
+    if (auto) {
+      cd *= 1 + clamp((this.speed - 44) / 6, 0, 2);
+      // well above the wanted pace, the autopilot spreads its wings as an air brake
+      const over = this.speed - (this.cruiseOverride ?? this.cruise) - 4;
+      if (over > 0) cd *= 1 + Math.min(over * 0.3, 3);
+    }
     let thrust = 0;
     if (wantFlap) {
       if (auto) thrust = THRUST * 0.75;
       else if (this.stamina > 0.02) { thrust = THRUST; this.stamina = Math.max(0, this.stamina - dt * 0.11); }
       else thrust = THRUST * 0.3;
     } else if (!auto) this.stamina = Math.min(1, this.stamina + dt * 0.07 * (1 + this.tuck * 0.6));
+    // flight assist: a gentle soaring lift holds cruising speed in level flight, so you only flap to go faster or climb
+    if (!auto && w.assist && !wantDive) thrust = Math.max(thrust, clamp((27 - this.speed) * 0.4 + G * Math.max(0, Math.sin(this.pitch)) * 0.35, 0, THRUST * 0.75));
     if (this.speed < STALL + 2) thrust = Math.max(thrust, THRUST * 0.6);
-    this.flapping = thrust > 0;
+    // soaring lift alone glides; the wings only beat for real thrust
+    this.flapping = wantFlap || thrust > THRUST * 0.45;
     const acc = -G * Math.sin(this.pitch) - cd * this.speed * this.speed + thrust * (1 - this.tuck * 0.7);
     this.speed = clamp(this.speed + acc * dt, 9, 115);
     this.pos.addScaledVector(this.fwd, this.speed * dt);

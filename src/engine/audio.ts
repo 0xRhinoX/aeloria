@@ -237,6 +237,40 @@ export class Sound {
     });
   }
 
+  /** the Leviathan's song: low gliding moans with a high cry over them; `near` 0..1 sets how loud */
+  song(near: number) {
+    if (!this.ac || !this.on) return;
+    const ac = this.ac, t = ac.currentTime, vol = 0.06 + near * 0.22;
+    const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900; f.Q.value = 3;
+    const out = ac.createGain(); out.gain.value = vol;
+    f.connect(out).connect(this.master);
+    // three phrases: a falling moan, a rising call, a long settle
+    const phrases: [number, number, number, number][] = [[0, 2.2, 92, 64], [2.0, 2.0, 70, 128], [3.8, 3.2, 118, 58]];
+    for (const [at, len, f0, f1] of phrases) {
+      const s = t + at, o = ac.createOscillator(), o2 = ac.createOscillator(), g = ac.createGain();
+      const vib = ac.createOscillator(), vg = ac.createGain();
+      o.type = 'sawtooth'; o2.type = 'sine';
+      o.frequency.setValueAtTime(f0, s); o.frequency.exponentialRampToValueAtTime(f1, s + len);
+      o2.frequency.setValueAtTime(f0 * 0.5, s); o2.frequency.exponentialRampToValueAtTime(f1 * 0.5, s + len);
+      vib.frequency.value = 4.5; vg.gain.value = f0 * 0.025;
+      vib.connect(vg); vg.connect(o.frequency);
+      g.gain.setValueAtTime(0, s); g.gain.linearRampToValueAtTime(0.5, s + len * 0.3); g.gain.linearRampToValueAtTime(0.0001, s + len);
+      o.connect(g); o2.connect(g); g.connect(f);
+      o.start(s); o2.start(s); vib.start(s); o.stop(s + len + 0.05); o2.stop(s + len + 0.05); vib.stop(s + len + 0.05);
+    }
+    // the high cry on top, filtered and airy
+    const c = ac.createOscillator(), cg = ac.createGain(), cf = ac.createBiquadFilter(), cs = t + 1.4;
+    c.type = 'triangle'; cf.type = 'bandpass'; cf.frequency.value = 600; cf.Q.value = 4;
+    c.frequency.setValueAtTime(380, cs); c.frequency.exponentialRampToValueAtTime(620, cs + 1.1); c.frequency.exponentialRampToValueAtTime(300, cs + 2.6);
+    cg.gain.setValueAtTime(0, cs); cg.gain.linearRampToValueAtTime(vol * 0.35, cs + 0.5); cg.gain.linearRampToValueAtTime(0.0001, cs + 2.6);
+    c.connect(cf).connect(cg).connect(this.master); c.start(cs); c.stop(cs + 2.7);
+    // a sub swell felt more than heard
+    const sub = ac.createOscillator(), sg = ac.createGain();
+    sub.frequency.setValueAtTime(38, t); sub.frequency.linearRampToValueAtTime(31, t + 6);
+    sg.gain.setValueAtTime(0, t); sg.gain.linearRampToValueAtTime(vol * 1.2, t + 1.5); sg.gain.linearRampToValueAtTime(0.0001, t + 7);
+    sub.connect(sg).connect(this.master); sub.start(t); sub.stop(t + 7.1);
+  }
+
   thunder(delay: number) {
     if (!this.ac || !this.on) return;
     const ac = this.ac, t = ac.currentTime + delay, s = ac.createBufferSource();

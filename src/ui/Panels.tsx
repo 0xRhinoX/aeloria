@@ -227,6 +227,9 @@ export function Activities() {
           <small>{race.last != null ? `last ${fmtTime(race.last)} · ` : ''}{race.best != null ? `best ${fmtTime(race.best)}` : `${race.total} rings · R`}</small>
         </button>
       )}
+      <button className="act" onClick={() => engine.findLeviathan()}>
+        <b>Ride with the Leviathan</b><small>a 300 m sky whale · L</small>
+      </button>
       <button className="act" onClick={() => engine.findFlock()}>
         <b>Find wild mounts</b><small>bond to take a new mount · G</small>
       </button>
@@ -456,6 +459,7 @@ const EXPLORE: Row[] = [
   ['World map, fly anywhere', 'M', 'Back', 'Minimap'],
   ['Ring race', 'R', '', 'Race button'],
   ['Seek a wild flock / hold to bond', 'G / hold B', '', 'Activity buttons'],
+  ['Ride with the Leviathan', 'L', '', 'Activity buttons'],
   ['Sky: day, dusk, night', 'T', '', 'Settings → World'],
   ['Photo mode', 'P', '', 'Settings → World'],
   ['Hide the interface', 'H', '', ''],

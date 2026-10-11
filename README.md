@@ -126,3 +126,7 @@ src/
 ```
 
 Add `?debug` to the URL to expose `window.aeloria` (the engine and store) in the console.
+
+## License
+
+The code is released under the [MIT License](LICENSE). The name "Aeloria" and its logo are not covered by the license, so forks should use their own name.

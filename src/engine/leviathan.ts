@@ -522,6 +522,9 @@ export class Leviathan {
   private mPos: THREE.BufferAttribute;
   private mSize: THREE.BufferAttribute;
   private mA: THREE.BufferAttribute;
+  /** bounds that follow the body, so three.js can skip the whale (and its shadow) when it is out of view */
+  private bound = new THREE.Sphere(new THREE.Vector3(), 240);
+  private boundFx = new THREE.Sphere(new THREE.Vector3(), 330);
   private sc = { x: 0, y: 0 };
   private v1 = new THREE.Vector3();
   private v2 = new THREE.Vector3();
@@ -555,9 +558,9 @@ export class Leviathan {
     const bg = new THREE.BufferGeometry();
     bg.setAttribute('position', new THREE.BufferAttribute(P, 3));
     bg.setIndex(idx);
+    bg.boundingSphere = this.bound;
     this.body = new THREE.Mesh(bg, bodyMaterial(this.uni, hq));
     this.body.customDepthMaterial = bodyDepthMaterial(this.uni);
-    this.body.frustumCulled = false;
     this.body.castShadow = this.body.receiveShadow = true;
 
     const flip = loft(FLIPPER), finMat = finMaterial(this.uni, 88, 20);
@@ -565,7 +568,11 @@ export class Leviathan {
     this.finL = new THREE.Mesh(flip, finMat);
     this.fluke = new THREE.Mesh(loft(FLUKE), finMaterial(this.uni, 58, 0));
     this.dorsal = new THREE.Mesh(dorsalGeo(), finMaterial(this.uni, 11, 0, 1));
-    for (const m of [this.finR, this.finL, this.fluke, this.dorsal]) { m.matrixAutoUpdate = false; m.frustumCulled = false; m.castShadow = true; }
+    for (const m of [this.finR, this.finL, this.fluke, this.dorsal]) {
+      m.matrixAutoUpdate = false; m.castShadow = true;
+      // pad the fins' bounds for their flex
+      if (!m.geometry.boundingSphere) { m.geometry.computeBoundingSphere(); m.geometry.boundingSphere!.radius += 12; }
+    }
 
     // the garden: stalks crowd the back on either side of the glowing spine line
     const rand = mulberry32(911), nG = hq ? 320 : 140;
@@ -582,8 +589,8 @@ export class Leviathan {
     ig.setAttribute('aInst', new THREE.InstancedBufferAttribute(inst, 4));
     ig.setAttribute('aCol', new THREE.InstancedBufferAttribute(col, 3));
     ig.instanceCount = nG;
+    ig.boundingSphere = this.bound;
     const garden = new THREE.Mesh(ig, gardenMaterial(this.uni));
-    garden.frustumCulled = false;
 
     // tendrils: ribbons whose points are simulated on the CPU
     const nT = hq ? 34 : 18;
@@ -606,8 +613,8 @@ export class Leviathan {
     rg.setAttribute('aAlong', new THREE.BufferAttribute(along, 1));
     rg.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
     rg.setIndex(ridx);
+    rg.boundingSphere = this.bound;
     this.ribbon = new THREE.Mesh(rg, ribbonMaterial(this.uni));
-    this.ribbon.frustumCulled = false;
     this.ribbon.renderOrder = 4;
 
     // glowing points: lures on the tendrils, drifting spores, the exhaled spout
@@ -629,8 +636,8 @@ export class Leviathan {
     this.ptsMat.uniforms.uDrift.value = 0.4;
     this.ptsMat.uniforms.uBlink.value = 0.5;
     this.ptsMat.uniforms.uFar.value = 0.00025;
+    pg.boundingSphere = this.boundFx;
     this.pts = new THREE.Points(pg, this.ptsMat);
-    this.pts.frustumCulled = false;
     const mg = new THREE.BufferGeometry();
     this.mPos = new THREE.BufferAttribute(new Float32Array(BLOW * 3), 3).setUsage(THREE.DynamicDrawUsage);
     this.mSize = new THREE.BufferAttribute(new Float32Array(BLOW), 1).setUsage(THREE.DynamicDrawUsage);
@@ -638,8 +645,8 @@ export class Leviathan {
     mg.setAttribute('position', this.mPos);
     mg.setAttribute('aSize', this.mSize);
     mg.setAttribute('aA', this.mA);
+    mg.boundingSphere = this.boundFx;
     this.mist = new THREE.Points(mg, this.mistMat);
-    this.mist.frustumCulled = false;
     this.mist.renderOrder = 5;
 
     this.group.add(this.body, this.finL, this.finR, this.fluke, this.dorsal, garden, this.ribbon, this.pts, this.mist);
@@ -705,6 +712,8 @@ export class Leviathan {
       for (const [row, v] of [[0, f.c], [1, f.side], [2, f.up]] as const) { const k = (row * SPN + i) * 4; D[k] = v.x; D[k + 1] = v.y; D[k + 2] = v.z; }
     }
     this.spineTex.needsUpdate = true;
+    this.bound.center.copy(F[SPN >> 1].c);
+    this.boundFx.center.copy(F[SPN >> 1].c);
   }
 
   /** Interpolated frame at u into fc/fs/fu/ft. */

@@ -33,6 +33,7 @@ It is a fully static site, so no server or environment variables are needed.
 | Lumen Forest | rainforest giants, glowing pods, trumpet flowers, ferns, mushrooms and boulders |
 | Amber Plains | dense grass and umbrella trees under drifting islands |
 | Mirror Lake | water with depth colour, shoreline foam and glowing plankton, under a banded gas giant |
+| The Leviathan | a 300 m sky whale swimming a slow figure-eight over the whole world, trailing glowing tendrils and spores |
 
 ## Flying
 
@@ -46,7 +47,7 @@ Press `F` (or **Take reins**) to fly the selected rider yourself. Press it again
 | Barrel roll | `Q` / `E` | `X` | **Roll** |
 | Back to autopilot | `F` | `Start` | **Autopilot** |
 
-The flight model is energy based. Banking turns the mount. Diving trades height for speed, and climbing spends it. Tucking the wings cuts drag for fast dives. Flapping gives thrust but drains stamina, which refills while you glide. Collecting a drift seed or passing a race ring tops it up. Fly too slow and the mount stalls and noses down. Rock, ground and water are solid, so you bounce off them and lose speed. **Flight assist** (on by default, in Settings → Ride) steers gently around rock and pulls up near the ground.
+The flight model is energy based. Banking turns the mount. Diving trades height for speed, and climbing spends it. Tucking the wings cuts drag for fast dives. Flapping gives thrust but drains stamina, which refills while you glide. Collecting a drift seed or passing a race ring tops it up. Fly too slow and the mount stalls and noses down. Rock, ground and water are solid, so you bounce off them and lose speed. **Flight assist** (on by default, in Settings → Ride) steers gently around rock and pulls up near the ground, whether you steer with the mouse or the keys. It also gives a soaring lift that holds cruising speed in level flight, and levels the nose when you let go, so you only flap to go faster or climb.
 
 ## Other controls
 
@@ -58,6 +59,7 @@ The flight model is energy based. Banking turns the mount. Diving trades height 
 | `T` | sky: Day, Dusk, Night |
 | `R` | start or quit the ring race |
 | `G` / hold `B` | seek a wild flock / bond with a wild mount |
+| `L` | ride with the Leviathan (the autopilot escorts it; flying yourself, the compass marks it) |
 | `P` | photo mode, with depth of field and Save image |
 | `H` | hide the interface |
 | `O` | sound (on by default, starts on your first click or key press) |
@@ -86,6 +88,7 @@ Every preset adjusts the pixel ratio on the fly to hold the frame rate. The choi
 
 - **Glow trail:** riders flying low make the ground and plants ripple with light, strongest at night. Wingtips leave light trails at speed.
 - **Skyveil Run:** a ring race through the Hanging Peaks, with best times saved per seed.
+- **The Leviathan:** a sky whale that follows its own path like a snake, so turns ripple down its 300 m body. Its route rises smoothly over the floating isles and the Elder Tree. Its body is solid, and flying alongside it puts you in its slipstream, which pushes you along and restores stamina. Every minute or so it sings, and the whole world's glow swells in answer. It shows on the compass, minimap and world map.
 - **Wild mounts:** riderless flocks circle the peaks and plains. Fly within 40 m and hold Bond for 2.5 s to take the wild mount. Your old mount returns to the wild, and the new colourway is kept.
 - **Drift seeds:** 60 glowing seeds per world. Collecting them unlocks the Aurora (10), Obsidian (25) and Sunbloom (45) colourways.
 - **Weather:** clear, mist, rain and storm, with valley fog, rain streaks, rippling water, lightning and thunder.

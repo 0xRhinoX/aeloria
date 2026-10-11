@@ -31,6 +31,8 @@ export class CameraRig {
   private shotT = 0;
   private shotPos = new THREE.Vector3();
   private qFlip = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI);
+  /** low-passed flight direction the chase camera hangs behind, so small corrections do not swing the view */
+  private heading = new THREE.Vector3(0, 0, 1);
   private t = 0;
 
   constructor(private unocclude: (from: THREE.Vector3, to: THREE.Vector3) => void) {}
@@ -49,7 +51,8 @@ export class CameraRig {
     this.t += dt;
     let mode = inp.mode;
     if (inp.photo) mode = 'cinema';
-    if (inp.idle && !inp.dragging) { this.lookYaw *= 1 - dt * 1.2; this.lookPitch *= 1 - dt * 1.2; }
+    // a drag to look around stays put for a while, then eases back behind the rider
+    if (inp.idle && !inp.dragging) { this.lookYaw *= 1 - Math.min(1, dt * 0.5); this.lookPitch *= 1 - Math.min(1, dt * 0.5); }
     const flat = new THREE.Vector3(r.fwd.x, 0, r.fwd.z).normalize();
     const right = new THREE.Vector3().crossVectors(flat, UP).normalize();
     const speedK = clamp((r.speed - 25) / 60, 0, 1);
@@ -72,15 +75,18 @@ export class CameraRig {
     }
 
     if (mode === 'chase') {
-      // follow the aim when flying with the mouse, otherwise the flight path with a capped pitch
-      const base = inp.aim ? inp.aim.clone() : r.fwd.clone();
-      const p = clamp(Math.asin(clamp(base.y, -1, 1)) * 0.7, -0.6, 0.6), yw = Math.atan2(base.x, base.z) + this.lookYaw;
+      // follow the aim when flying with the mouse, otherwise a smoothed flight path; the autopilot gets the calmest view
+      const base = inp.aim ? inp.aim : r.fwd;
+      if (this.snap) this.heading.copy(base);
+      else this.heading.lerp(base, 1 - Math.exp(-dt * (inp.aim ? 7 : r.manual ? 3 : 1.4))).normalize();
+      const pk = inp.aim ? 0.7 : r.manual ? 0.5 : 0.35;
+      const p = clamp(Math.asin(clamp(this.heading.y, -1, 1)) * pk, -0.6, 0.6), yw = Math.atan2(this.heading.x, this.heading.z) + this.lookYaw;
       const dir = new THREE.Vector3(Math.sin(yw) * Math.cos(p), Math.sin(p), Math.cos(yw) * Math.cos(p));
       const dist = this.chaseDist * (1 + speedK * 0.25);
       pos.copy(r.pos).addScaledVector(dir, -dist).add(new THREE.Vector3(0, dist * 0.3 + this.lookPitch * 22, 0));
       look.copy(r.pos).addScaledVector(dir, inp.aim ? 40 : 14).add(new THREE.Vector3(0, 2.5, 0));
       fov = 60 + speedK * 20 + r.tuck * 6;
-      roll = (r.roll + r.trickRoll * 0.15) * 0.3;
+      roll = (r.roll + r.trickRoll * 0.15) * (r.manual ? 0.3 : 0.12);
       kPos = 6; kLook = 12;
     } else if (mode === 'drone') {
       const yw = Math.atan2(flat.x, flat.z) + this.orbitYaw;

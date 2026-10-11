@@ -8,6 +8,7 @@ import { palette } from './palette';
 import { RIDERS, SEED_PALETTES, swatch, type MountPalette } from './creatures';
 import { NO_CONTROLS, Rider, type FlightWorld, type Solids } from './rider';
 import { Wilds } from './wild';
+import { Leviathan } from './leviathan';
 import { Race, Seeds } from './collectibles';
 import { Sound } from './audio';
 import { Input } from './input';
@@ -21,6 +22,8 @@ import { store, toast, useUI, type CamMode, type Gfx } from '../state/store';
 const V3 = THREE.Vector3;
 const UPV = new V3(0, 1, 0);
 const CAMS: CamMode[] = ['chase', 'seat', 'drone', 'orbit', 'cinema'];
+
+const fmtKm = (d: number) => (d < 1000 ? `${Math.max(0, Math.round(d / 10) * 10)} m` : `${(d / 1000).toFixed(1)} km`);
 
 export function detectQuality(): Quality {
   const nav = navigator as Navigator & { deviceMemory?: number };
@@ -88,6 +91,13 @@ export class Engine {
   pts: { ff?: THREE.ShaderMaterial; halo?: THREE.ShaderMaterial; mist?: THREE.ShaderMaterial } = {};
   riders: Rider[] = [];
   wilds!: Wilds;
+  leviathan = new Leviathan();
+  /** the autopilot target used while riding alongside the Leviathan */
+  private levFollow: (() => THREE.Vector3 | null) | null = null;
+  /** where the escorting rider should sit: beside the whale's front flank */
+  private levEscort: (() => THREE.Vector3) | null = null;
+  private inWake = false;
+  private heardSong = false;
   seeds: Seeds | null = null;
   race: Race | null = null;
   birds: Birds | null = null;
@@ -160,7 +170,7 @@ export class Engine {
     sh.mapSize.set(2048, 2048);
     Object.assign(sh.camera, { left: -230, right: 230, top: 230, bottom: -230, near: 1, far: 3200 });
     sh.bias = -0.0004; sh.normalBias = 0.8;
-    scene.add(this.sky, this.water, this.sun, this.sun.target, this.hemi, this.rain, this.trails.mesh, this.speedLines, this.splash.points);
+    scene.add(this.sky, this.water, this.sun, this.sun.target, this.hemi, this.rain, this.trails.mesh, this.speedLines, this.splash.points, this.leviathan.group);
 
     const bump = quality === 'low' ? 0 : 1;
     const leaves = makeLeafAtlas(Math.min(8, gl.capabilities.getMaxAnisotropy()));
@@ -317,6 +327,8 @@ export class Engine {
     this.seeds = new Seeds(g, d.seeds, store.get<number[]>(`seeds-${d.seed}`, []));
     this.race = new Race(g, d.rings);
     this.wilds.build(d.seed, d.flocks);
+    this.leviathan.build(d.seed, T, d.isles, d.elder);
+    this.levFollow = null;
 
     const [ex, ey, ez] = d.elder;
     this.solids = {
@@ -327,6 +339,7 @@ export class Engine {
       }),
       pillars: d.obstacles.filter(o => o.t === 'c' && Math.hypot(o.x - ex, o.z - ez) > 5).map(o => ({ x: o.x, z: o.z, r: (o.r / 1.4) * 1.08, top: o.top })),
       elder: { x: ex, y: ey, z: ez },
+      movers: this.leviathan.spheres,
     };
 
     if (!this.riders.length) this.riders = RIDERS.map((r, i) => new Rider(r, i, this.scene));
@@ -385,7 +398,7 @@ export class Engine {
     if (s.race.active) this.stopRace();
     // flying yourself carries over to the new rider
     const old = this.riders[s.sel], next = this.riders[i];
-    if (old) old.manual = false;
+    if (old) { old.manual = false; old.resetSmoothing(); }
     if (s.manual) {
       next.manual = true; next.follow = null; next.cruiseOverride = null;
       this.input.syncAim(next.yaw, next.pitch);
@@ -401,6 +414,7 @@ export class Engine {
     const r = this.cur;
     if (!r) return;
     r.manual = on;
+    r.resetSmoothing();
     if (on) {
       r.follow = null; r.cruiseOverride = null; r.stamina = 1;
       this.input.syncAim(r.yaw, r.pitch);
@@ -492,6 +506,27 @@ export class Engine {
       return mount.pos.clone().addScaledVector(mount.fwd, -12).addScaledVector(side, 14);
     };
     toast('Seeking a wild flock', 'hold B or the Bond button when you are close');
+  }
+  /** Autopilot escorts the Leviathan; flying yourself, the compass marks it. */
+  findLeviathan() {
+    const r = this.cur; if (!r) return;
+    const lv = this.leviathan, d = lv.nearest(r.pos).skin;
+    if (r.manual) { toast('The Leviathan', `${fmtKm(d)} away · follow the violet marker on your compass`); return; }
+    if (useUI.getState().race.active) this.stopRace();
+    let side = 1;
+    this.levEscort = () => {
+      // ride above its back, a little off to whichever side we are already on, with the body stretching ahead in view
+      const f = lv.frameAt(0.62);
+      side = Math.sign(r.pos.clone().sub(f.c).dot(f.side)) || side;
+      return f.c.clone().addScaledVector(f.up, f.r * 0.85 + 32).addScaledVector(f.side, side * 22);
+    };
+    // steer at a carrot ahead of the escort spot, so the rider settles in beside the whale instead of circling the spot
+    this.levFollow = () => {
+      const e = this.levEscort!(), d = e.distanceTo(r.pos);
+      return d > 220 ? e : e.addScaledVector(lv.dir, 90);
+    };
+    r.follow = this.levFollow;
+    toast(d > 150 ? 'Flying to the Leviathan' : 'Riding with the Leviathan', d > 150 ? `${fmtKm(d)} away` : 'its slipstream carries you');
   }
   findSeed() {
     const r = this.cur; if (!r || !this.seeds) return;
@@ -635,6 +670,7 @@ export class Engine {
       if (p.y < y + R * 0.4 * (1 - t * t) + 4 && p.y > y - R * 2.1 * Math.pow(1 - t, 0.8) - 2) return true;
     }
     for (const c of S.pillars) if (p.y < c.top + 4 && Math.hypot(p.x - c.x, p.z - c.z) < c.r * 1.35 + 3) return true;
+    for (const [x, y, z, r] of S.movers) if (Math.hypot(p.x - x, p.y - y, p.z - z) < r * 1.2 + 4) return true;
     const e = S.elder, dx = p.x - e.x, dz = p.z - e.z;
     if ((dx * dx + dz * dz) / (128 * 128) + ((p.y - e.y - 162) ** 2) / (55 * 55) < 1) return true;
     return false;
@@ -702,23 +738,49 @@ export class Engine {
     this.sun.color.copy(p.sunC); this.sun.intensity = p.sunI;
     this.hemi.color.copy(p.hs); this.hemi.groundColor.copy(p.hg); this.hemi.intensity = p.hi + fl * 3;
     this.gl.toneMappingExposure = p.exp + fl * 0.3;
-    U.uNight.value = p.glow;
+    U.uNight.value = p.glow + this.leviathan.pulse * 0.55;
     U.uWind.value = p.wind;
+
+    // the Leviathan moves first so riders collide with where it is this frame
+    const lv = this.leviathan;
+    lv.update(dt, t, p.glow, this.gl.getDrawingBufferSize(new THREE.Vector2()).y * 0.5);
 
     // riders
     const flight = this.flight;
     const sel = this.cur;
     const ctl = sel.manual ? this.input.controls(sel.yaw, sel.pitch) : NO_CONTROLS;
     this.riders.forEach((r, i) => {
-      if (r.follow && r === sel && !s.race.active && !r.manual) {
+      if (r.follow && r.follow === this.levFollow && !r.manual) {
+        // match the whale's pace: hurry when the escort spot is far ahead, settle to its speed alongside
+        const e = this.levEscort!(), ahead = e.clone().sub(r.pos).dot(lv.dir), far = e.distanceTo(r.pos);
+        r.cruiseOverride = far > 220 ? 40 : clamp(lv.speed + ahead * 0.12, 19, 36);
+      } else if (r.follow && r === sel && !s.race.active && !r.manual) {
         const f = r.follow();
         r.cruiseOverride = f && f.distanceTo(r.pos) < 40 ? 25 : null;
-      }
+      } else if (!r.follow) r.cruiseOverride = null;
       r.update(dt, i === s.sel ? ctl : NO_CONTROLS, flight);
       U.uRip.value[i].set(r.pos.x, T.surface(r.pos.x, r.pos.z), r.pos.z, r.low);
     });
     this.wilds.update(dt, T, this.data.obstacles);
     this.birds?.update(t);
+
+    // the Leviathan's song, and its slipstream: fly close alongside for a push and stamina
+    const lvN = lv.nearest(sel.pos);
+    if (lv.sang) {
+      const near = clamp(1 - lvN.skin / 1600, 0, 1);
+      this.sound.song(near);
+      if (!this.heardSong || near > 0.5) toast('The Leviathan sings', near > 0.5 ? 'the whole world answers in light' : `${fmtKm(lvN.skin)} away · press L to ride with it`);
+      this.heardSong = true;
+    }
+    const wake = lvN.skin > 0 && lvN.skin < 70 ? 1 - lvN.skin / 70 : 0, along = sel.fwd.dot(lvN.frame.t);
+    // the push is for players; the autopilot is already matching the whale's pace
+    if (wake > 0 && along > 0.3 && sel.manual) {
+      sel.speed = Math.min(sel.speed + 7 * wake * along * dt, 60);
+      sel.stamina = Math.min(1, sel.stamina + dt * 0.3 * wake);
+    }
+    const wakeNow = wake > 0.15 && along > 0.3;
+    if (wakeNow && !this.inWake) toast("Leviathan's slipstream", sel.manual ? 'riding its wake restores stamina' : 'gliding alongside the Leviathan');
+    this.inWake = wakeNow ? true : wake === 0 ? false : this.inWake;
 
     // impacts, spray, trails
     if (sel.impact > this.lastImpact + 0.15) this.sound.thump(sel.impact);
@@ -937,6 +999,7 @@ export class Engine {
     this.seeds?.pos.forEach((p, i) => { if (!this.seeds!.got.has(i)) dot(p.x, p.z, 2.4, '#ffd36a'); });
     if (this.race?.active) this.race.rings.forEach((rg, i) => { if (i >= this.race!.next) dot(rg.p.x, rg.p.z, i === this.race!.next ? 4.5 : 2.5, i === this.race!.next ? '#5ff2d6' : 'rgba(95,242,214,.45)'); });
     for (const m of this.wilds.mounts) dot(m.pos.x, m.pos.z, 3, '#ff6ad5');
+    for (const u of [0.15, 0.4, 0.65]) { const f = this.leviathan.frameAt(u); dot(f.c.x, f.c.z, 5 - u * 4, '#b18cff'); }
     this.riders.forEach(o => { if (o !== r) dot(o.pos.x, o.pos.z, 3.4, o.pal.glow, 'rgba(0,0,0,.5)'); });
     if (this.pin) dot(this.pin.x, this.pin.z, 4.5, '#ffffff', '#5ff2d6');
     g.restore();
@@ -999,6 +1062,8 @@ export class Engine {
     if (sn) marker(sn.p.x, sn.p.z, '#ffd36a', '', 4);
     const wild = this.wilds.nearest(r.pos).mount;
     if (wild) marker(wild.pos.x, wild.pos.z, '#ff6ad5', '', 4);
+    const lc = this.leviathan.center, ld = this.leviathan.nearest(r.pos).skin;
+    marker(lc.x, lc.z, '#b18cff', ld > 120 ? `Leviathan ${fmtKm(ld)}` : '', 6);
     g.fillStyle = '#5ff2d6';
     g.beginPath(); g.moveTo(W / 2, H * 0.98); g.lineTo(W / 2 - 5 * dpr, H * 0.98 + 0.1); g.lineTo(W / 2, H * 0.7); g.lineTo(W / 2 + 5 * dpr, H * 0.98); g.closePath(); g.fill();
   }
@@ -1019,6 +1084,15 @@ export class Engine {
     }
     this.seeds?.pos.forEach((p, i) => { if (this.seeds!.got.has(i)) return; const [x, y] = at(p.x, p.z); g.fillStyle = '#ffd36a'; g.beginPath(); g.arc(x, y, 2.6 * dpr, 0, TAU); g.fill(); });
     for (const m of this.wilds.mounts) { const [x, y] = at(m.pos.x, m.pos.z); g.fillStyle = '#ff6ad5'; g.beginPath(); g.arc(x, y, 3 * dpr, 0, TAU); g.fill(); }
+    {
+      g.strokeStyle = '#b18cff'; g.lineCap = 'round';
+      for (let k = 0; k < 8; k++) {
+        const a = this.leviathan.frameAt(k / 8), b = this.leviathan.frameAt((k + 1) / 8), [x0, y0] = at(a.c.x, a.c.z), [x1, y1] = at(b.c.x, b.c.z);
+        g.lineWidth = (7 - k * 0.7) * dpr; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+      }
+      const [lx, ly] = at(this.leviathan.center.x, this.leviathan.center.z);
+      g.font = font(12, 600); g.textAlign = 'center'; g.fillStyle = '#e6dcff'; g.fillText('Leviathan', lx, ly - 12 * dpr);
+    }
     this.data.places.forEach(pl => {
       const [x, y] = at(pl.c[0], pl.c[2]);
       g.fillStyle = 'rgba(5,11,20,.55)'; g.font = font(13, 600); g.textAlign = 'center';
